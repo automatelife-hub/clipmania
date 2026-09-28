@@ -1,0 +1,36 @@
+# ClipMania default configuration
+# Copy to your project directory and customize as needed.
+
+[output]
+# Output directory for processed clips (relative to CWD or absolute)
+dir = "./output"
+
+[defaults]
+# Default layout: horizontal | vertical-blur | vertical-stacked | vertical-crop
+layout = "vertical-blur"
+
+[encoding]
+# x264 constant rate factor (lower = higher quality, larger files)
+crf = 20
+# x264 preset: ultrafast, superfast, veryfast, faster, fast, medium, slow, slower, veryslow
+preset = "fast"
+
+[audio]
+# EBU R128 loudness normalization targets
+target_lufs = -14
+lra = 11
+true_peak = -1.5
+# Audio bitrate for AAC encoding
+bitrate = "192k"
+
+[live_buffer]
+# Buffer directory (leave empty for platform default)
+# Windows: %LOCALAPPDATA%/clipmania/buffer
+# Linux/macOS: /tmp/clipmania/buffer
+dir = ""
+# HLS segment duration in seconds
+segment_duration = 5
+# Number of segments in the rolling playlist (total buffer = segment_duration * playlist_size)
+playlist_size = 24
+# Stream quality for Streamlink
+quality = "best"
