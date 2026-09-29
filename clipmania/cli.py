@@ -49,7 +49,8 @@ def main(ctx: click.Context, config_path: Path | None, output_dir: Path | None, 
     ctx.obj["config"] = cfg
     ctx.obj["verbose"] = verbose
 
-    check_all_dependencies(verbose=verbose)
+    if not ctx.resilient_parsing:
+        check_all_dependencies(verbose=verbose)
 
 
 # ---------------------------------------------------------------------------
@@ -58,8 +59,9 @@ def main(ctx: click.Context, config_path: Path | None, output_dir: Path | None, 
 
 @main.command()
 @click.argument("url")
-@click.option("--start", "-s", required=True, help="Start timestamp (e.g. 1:30, 1h2m3s).")
-@click.option("--end", "-e", required=True, help="End timestamp.")
+@click.option("--start", "-s", default=None, help="Start timestamp (e.g. 1:30, 1h2m3s).")
+@click.option("--end", "-e", default=None, help="End timestamp.")
+@click.option("--chapter", "-c", default=None, help="Chapter title or 1-based index to clip.")
 @click.option(
     "--layout", "-l",
     type=click.Choice([l.value for l in Layout], case_sensitive=False),
@@ -77,25 +79,47 @@ def main(ctx: click.Context, config_path: Path | None, output_dir: Path | None, 
 def clip(
     ctx: click.Context,
     url: str,
-    start: str,
-    end: str,
+    start: str | None,
+    end: str | None,
+    chapter: str | None,
     layout: str | None,
     platform: str | None,
     raw: bool,
 ) -> None:
-    """Clip a section from a VOD or saved video.
+    """Clip a section from a VOD, saved video, or chapter.
 
     \b
     Examples:
       clipmania clip "https://youtube.com/watch?v=..." --start 1:30 --end 2:00
+      clipmania clip "https://youtube.com/watch?v=..." --chapter 2 --layout vertical-smart
       clipmania clip "https://kick.com/video/..." -s 12:30 -e 13:15 --layout vertical-blur
     """
+    from .ingestion.metadata import fetch_metadata, find_chapter
     from .ingestion.ytdlp import clip_section
     from .processing.pipeline import process_clip
-    from .utils import parse_timestamp
+    from .utils import format_timestamp, parse_timestamp
 
     cfg: ClipManiaConfig = ctx.obj["config"]
     channel = extract_channel(url)
+
+    # Resolve timestamps from chapter if --chapter is provided
+    if chapter:
+        console.print(f"[dim]   Querying video chapters for '{chapter}'...[/]")
+        try:
+            meta = fetch_metadata(url)
+            ch = find_chapter(meta.chapters, chapter)
+            if not ch:
+                avail = ", ".join(f"'{c.title}'" for c in meta.chapters[:5]) or "None found"
+                raise click.ClickException(f"Chapter '{chapter}' not found. Available: {avail}")
+            start = format_timestamp(ch.start_time)
+            end = format_timestamp(ch.end_time)
+            console.print(f"[bold cyan]📖 Chapter found:[/] {ch.title} ({start} → {end})")
+        except Exception as e:
+            if isinstance(e, click.ClickException):
+                raise
+            raise click.ClickException(f"Failed to resolve chapter: {e}")
+    elif not start or not end:
+        raise click.ClickException("Must provide either --start and --end timestamps, or --chapter.")
 
     # Validate timestamps before passing to yt-dlp (M6)
     try:
@@ -325,6 +349,7 @@ def live_stop(ctx: click.Context, cleanup: bool) -> None:
     help="Target platform for spec validation.",
 )
 @click.option("--single-pass", "single_pass", is_flag=True, help="Use single-pass processing (faster, less precise audio).")
+@click.option("--auto-crop", is_flag=True, help="Automatically detect facecam and gameplay regions via computer vision.")
 @click.option("--cam-crop", default=None, help="Facecam crop region w:h:x:y (for vertical-stacked).")
 @click.option("--game-crop", default=None, help="Gameplay crop region w:h:x:y (for vertical-stacked).")
 @click.pass_context
@@ -334,6 +359,7 @@ def convert(
     layout: str,
     platform: str | None,
     single_pass: bool,
+    auto_crop: bool,
     cam_crop: str | None,
     game_crop: str | None,
 ) -> None:
@@ -342,6 +368,7 @@ def convert(
     \b
     Examples:
       clipmania convert raw.mp4 --layout vertical-blur --platform tiktok
+      clipmania convert gameplay.mp4 -l vertical-stacked --auto-crop
       clipmania convert gameplay.mp4 -l vertical-stacked --cam-crop 640:480:1280:0
     """
     from .processing.pipeline import process_clip, process_clip_single_pass
@@ -349,6 +376,15 @@ def convert(
 
     cfg: ClipManiaConfig = ctx.obj["config"]
     layout_mode = Layout.from_string(layout)
+
+    # Auto-detect crops if requested
+    if auto_crop:
+        from .processing.autocrop import auto_detect_crops
+        console.print("[dim]   Auto-detecting facecam and gameplay regions…[/]")
+        c_crop, g_crop = auto_detect_crops(input_file)
+        cam_crop = c_crop.crop_str
+        game_crop = g_crop.crop_str
+        console.print(f"[green]✓ Detected crops:[/] cam={cam_crop}, game={game_crop}")
 
     # Validate crop parameters (C4: prevent FFmpeg filter injection)
     if cam_crop:
@@ -392,3 +428,284 @@ def convert(
         )
 
     console.print(f"\n[bold green]🎬 Done![/] {final}\n")
+
+
+# ---------------------------------------------------------------------------
+# info — inspect video metadata, qualities, and chapters
+# ---------------------------------------------------------------------------
+
+@main.command("info")
+@click.argument("url")
+def info(url: str) -> None:
+    """Inspect video metadata, available qualities, and chapters."""
+    from rich.table import Table
+    from .ingestion.metadata import fetch_metadata
+    from .utils import format_timestamp
+
+    console.print(f"\n[bold]ClipMania[/] — Querying metadata for [cyan]{url}[/]…\n")
+    try:
+        meta = fetch_metadata(url)
+    except Exception as e:
+        raise click.ClickException(str(e))
+
+    table = Table(title="Video Details", show_header=False, title_style="bold green")
+    table.add_column("Property", style="cyan", width=18)
+    table.add_column("Value")
+    table.add_row("Title", meta.title)
+    table.add_row("Channel / Uploader", meta.uploader)
+    table.add_row("Duration", format_timestamp(meta.duration))
+    if meta.view_count is not None:
+        table.add_row("Views", f"{meta.view_count:,}")
+    if meta.upload_date:
+        table.add_row("Upload Date", meta.upload_date)
+    table.add_row("Live Status", "[red]LIVE[/]" if meta.is_live else "VOD / Video")
+    if meta.available_resolutions:
+        table.add_row("Qualities", ", ".join(meta.available_resolutions[:8]))
+    console.print(table)
+
+    if meta.chapters:
+        ch_table = Table(title=f"Chapters ({len(meta.chapters)})", title_style="bold yellow")
+        ch_table.add_column("#", style="dim", width=4)
+        ch_table.add_column("Chapter Title", style="bold")
+        ch_table.add_column("Start", style="green")
+        ch_table.add_column("End", style="red")
+        ch_table.add_column("Duration", style="cyan")
+        for ch in meta.chapters:
+            ch_table.add_row(
+                str(ch.index),
+                ch.title,
+                format_timestamp(ch.start_time),
+                format_timestamp(ch.end_time),
+                f"{ch.duration:.1f}s",
+            )
+        console.print(ch_table)
+        console.print("\n[dim]Tip: Clip directly with: [bold]clipmania clip <URL> --chapter <# or name>[/][/]\n")
+
+
+# ---------------------------------------------------------------------------
+# montage — concatenate multiple clips into a montage
+# ---------------------------------------------------------------------------
+
+@main.command("montage")
+@click.argument("clips", nargs=-1, type=click.Path(exists=True, path_type=Path), required=True)
+@click.option("--output", "-o", type=click.Path(path_type=Path), default=None, help="Output file path.")
+@click.option("--copy", is_flag=True, help="Fast stream copy without re-encoding.")
+@click.pass_context
+def montage(ctx: click.Context, clips: tuple[Path, ...], output: Path | None, copy: bool) -> None:
+    """Concatenate multiple clips into a single video montage.
+
+    \b
+    Examples:
+      clipmania montage clip1.mp4 clip2.mp4 clip3.mp4 -o highlight.mp4
+      clipmania montage ./output/*.mp4 --copy
+    """
+    from .processing.composer import concat_clips
+
+    cfg: ClipManiaConfig = ctx.obj["config"]
+
+    if len(clips) < 2:
+        raise click.ClickException("Must specify at least 2 video clips to create a montage.")
+
+    out = output or (Path(cfg.output_dir) / "montage.mp4")
+    concat_clips(list(clips), out, reencode=not copy, crf=cfg.crf, preset=cfg.preset)
+    console.print(f"\n[bold green]🎬 Montage complete![/] {out}\n")
+
+
+# ---------------------------------------------------------------------------
+# wizard — interactive prompt-driven clipping
+# ---------------------------------------------------------------------------
+
+@main.command("wizard")
+@click.pass_context
+def wizard(ctx: click.Context) -> None:
+    """Interactive clipping wizard."""
+    from rich.prompt import Confirm, Prompt
+    from .ingestion.metadata import fetch_metadata
+    from .processing.pipeline import process_clip
+    from .ingestion.ytdlp import clip_section
+    from .utils import format_timestamp, parse_timestamp
+
+    cfg: ClipManiaConfig = ctx.obj["config"]
+    console.print("\n[bold cyan]✨ ClipMania Interactive Wizard ✨[/]\n")
+
+    url = Prompt.ask("[bold]Enter video URL[/]")
+    if not url.strip():
+        raise click.ClickException("No URL provided.")
+
+    console.print("[dim]Checking video information...[/]")
+    meta = None
+    try:
+        meta = fetch_metadata(url)
+        console.print(f"[green]✓ Found:[/] {meta.title} ({format_timestamp(meta.duration)})")
+    except Exception:
+        console.print("[yellow]Could not fetch online metadata; proceeding with manual timestamps.[/]")
+
+    start = ""
+    end = ""
+    if meta and meta.chapters:
+        use_ch = Confirm.ask(f"Found {len(meta.chapters)} chapters. Pick a chapter?", default=True)
+        if use_ch:
+            for c in meta.chapters:
+                console.print(f"  [cyan]{c.index}.[/] {c.title} ({format_timestamp(c.start_time)} - {format_timestamp(c.end_time)})")
+            choice = Prompt.ask("Chapter number or search keyword")
+            from .ingestion.metadata import find_chapter
+            selected = find_chapter(meta.chapters, choice)
+            if selected:
+                start = format_timestamp(selected.start_time)
+                end = format_timestamp(selected.end_time)
+                console.print(f"[green]Selected:[/] {selected.title}")
+
+    if not start:
+        start = Prompt.ask("Start timestamp (e.g. 0:30, 1:15)")
+    if not end:
+        end = Prompt.ask("End timestamp (e.g. 1:00, 2:00)")
+
+    layout_choices = [l.value for l in Layout]
+    layout = Prompt.ask(
+        "Choose layout",
+        choices=layout_choices,
+        default=cfg.default_layout,
+    )
+
+    platform = Prompt.ask(
+        "Target platform (or 'none')",
+        choices=list_platforms() + ["none"],
+        default="tiktok",
+    )
+    if platform == "none":
+        platform = None
+
+    channel = extract_channel(url)
+    raw_path = Path(cfg.output_dir) / f"_raw_{channel}.mp4"
+    console.print(f"\n[bold]Starting extraction:[/] {start} → {end}...")
+    actual_raw = clip_section(url, start, end, raw_path)
+
+    try:
+        layout_mode = Layout.from_string(layout)
+        final = process_clip(
+            actual_raw,
+            layout=layout_mode,
+            platform=platform,
+            output_dir=Path(cfg.output_dir),
+            config=cfg,
+            channel=channel,
+        )
+        console.print(f"\n[bold green]🎉 All done![/] Saved to: {final}\n")
+    finally:
+        actual_raw.unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# validate — pre-flight / post-flight platform validation
+# ---------------------------------------------------------------------------
+
+@main.command("validate")
+@click.argument("file", type=click.Path(exists=True, path_type=Path))
+@click.option(
+    "--platform", "-p",
+    type=click.Choice(list_platforms(), case_sensitive=False),
+    default=None,
+    help="Target platform specification to validate against (auto-detects if omitted).",
+)
+def validate(file: Path, platform: str | None) -> None:
+    """Validate a video file against social platform technical specifications.
+
+    \b
+    Examples:
+      clipmania validate output/clip.mp4 --platform tiktok
+      clipmania validate raw_video.mp4
+    """
+    from rich.panel import Panel
+    from .platforms import get_spec, recommend_platform, validate_output
+    from .processing.ffmpeg import probe
+
+    info = probe(file)
+    file_size = file.stat().st_size
+
+    if not platform:
+        recommendations = recommend_platform(info.width, info.height, info.duration)
+        if recommendations:
+            rec = recommendations[0]
+            console.print(
+                f"[bold cyan]Auto-detected recommended platform:[/] [bold]{rec}[/] "
+                f"(based on {info.width}×{info.height}, {info.duration:.1f}s)"
+            )
+            platform = rec
+        else:
+            raise click.ClickException(
+                f"No compatible platform found for {info.width}×{info.height}, "
+                f"{info.duration:.1f}s. Specify one with --platform."
+            )
+
+    spec = get_spec(platform)
+    warnings = validate_output(
+        {"duration": info.duration, "width": info.width, "height": info.height},
+        spec,
+        file_size_bytes=file_size,
+    )
+
+    if warnings:
+        warn_text = "\n".join(f"  • {w}" for w in warnings)
+        console.print(
+            Panel(
+                f"[bold red]Validation Failed for {spec.name}:[/]\n{warn_text}\n\n"
+                f"[dim]Resolution: {info.width}×{info.height} | Duration: {info.duration:.1f}s | "
+                f"Size: {file_size / (1024 * 1024):.1f}MB[/]",
+                title="⚠ Platform Validation",
+                border_style="red",
+            )
+        )
+        raise click.ClickException(f"Video does not comply with {spec.name} specification.")
+    else:
+        container = file.suffix.lstrip(".") or "unknown"
+        console.print(
+            Panel(
+                f"[bold green]✓ Basic video properties validated for {spec.name}[/]\n"
+                f"[dim](Checks: duration, resolution, aspect ratio, file size)[/]\n\n"
+                f"  • Resolution: {info.width}×{info.height} ({info.aspect_ratio})\n"
+                f"  • Duration: {info.duration:.1f}s (Max: {spec.max_duration_seconds or 'Unlimited'}s)\n"
+                f"  • File Size: {file_size / (1024 * 1024):.1f}MB (Max: {spec.max_file_size_mb}MB)\n"
+                f"  • Codec: {info.video_codec} / Container: {container}",
+                title="✓ Basic Validation Passed",
+                border_style="green",
+            )
+        )
+
+
+# ---------------------------------------------------------------------------
+# batch — process multiple clipping jobs in parallel
+# ---------------------------------------------------------------------------
+
+@main.command("batch")
+@click.argument("config_file", type=click.Path(exists=True, path_type=Path))
+@click.option(
+    "--workers", "-w",
+    type=int,
+    default=4,
+    help="Number of concurrent worker threads (default: 4).",
+)
+@click.option(
+    "--output-dir", "-o",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Output directory for batch clips.",
+)
+@click.pass_context
+def batch(ctx: click.Context, config_file: Path, workers: int, output_dir: Path | None) -> None:
+    """Process multiple video clipping tasks concurrently from a JSON or TOML file.
+
+    \b
+    Examples:
+      clipmania batch queue.json --workers 4
+      clipmania batch clips.toml -o ./output/batch
+    """
+    from .processing.batch import load_batch_config, process_batch
+
+    cfg: ClipManiaConfig = ctx.obj["config"]
+    jobs = load_batch_config(config_file)
+    out = output_dir or Path(cfg.output_dir)
+
+    results = process_batch(jobs, workers=workers, output_dir=out, config=cfg)
+    console.print(f"[bold green]Batch processing completed:[/] {len(results)} clips created in {out}\n")
+
+

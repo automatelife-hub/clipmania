@@ -1,9 +1,10 @@
-"""Platform target specifications for video export."""
+"""Platform target specifications for video export and validation."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 
 
 class AspectRatio(Enum):
@@ -28,6 +29,9 @@ class PlatformSpec:
     audio_lufs: float
     audio_bitrate: str
     notes: str
+    min_width: int = 480
+    max_file_size_mb: int = 287
+    recommended_bitrate: str = "192k"
 
 
 # ---------------------------------------------------------------------------
@@ -46,6 +50,8 @@ PLATFORM_SPECS: dict[str, PlatformSpec] = {
         audio_lufs=-14.0,
         audio_bitrate="192k",
         notes="Optimal under 60s, 9:16 vertical required",
+        min_width=720,
+        max_file_size_mb=287,
     ),
     "youtube_shorts": PlatformSpec(
         name="YouTube Shorts",
@@ -58,6 +64,8 @@ PLATFORM_SPECS: dict[str, PlatformSpec] = {
         audio_lufs=-14.0,
         audio_bitrate="192k",
         notes="Strictly under 60 seconds",
+        min_width=720,
+        max_file_size_mb=500,
     ),
     "kick": PlatformSpec(
         name="Kick Clips",
@@ -70,6 +78,8 @@ PLATFORM_SPECS: dict[str, PlatformSpec] = {
         audio_lufs=-14.0,
         audio_bitrate="192k",
         notes="Supports horizontal and vertical mobile feed",
+        min_width=720,
+        max_file_size_mb=250,
     ),
     "twitch": PlatformSpec(
         name="Twitch Highlights",
@@ -82,6 +92,8 @@ PLATFORM_SPECS: dict[str, PlatformSpec] = {
         audio_lufs=-14.0,
         audio_bitrate="192k",
         notes="Standard broadcast resolution, clips ≤60s",
+        min_width=1280,
+        max_file_size_mb=1000,
     ),
     "x": PlatformSpec(
         name="X (Twitter)",
@@ -94,6 +106,8 @@ PLATFORM_SPECS: dict[str, PlatformSpec] = {
         audio_lufs=-14.0,
         audio_bitrate="192k",
         notes="High mobile consumption in 9:16",
+        min_width=480,
+        max_file_size_mb=512,
     ),
 }
 
@@ -113,6 +127,7 @@ def get_spec(platform: str) -> PlatformSpec:
 def validate_output(
     video_info: dict[str, float | int],
     spec: PlatformSpec,
+    file_size_bytes: int | None = None,
 ) -> list[str]:
     """Validate video properties against a platform spec.
 
@@ -120,7 +135,7 @@ def validate_output(
     Returns a list of warning strings (empty means all checks passed).
     """
     warnings: list[str] = []
-    duration = video_info.get("duration", 0.0)
+    duration = float(video_info.get("duration", 0.0))
     width = int(video_info.get("width", 0))
     height = int(video_info.get("height", 0))
 
@@ -129,6 +144,18 @@ def validate_output(
             f"Duration {duration:.1f}s exceeds {spec.name} limit of "
             f"{spec.max_duration_seconds}s"
         )
+
+    if width > 0 and width < spec.min_width:
+        warnings.append(
+            f"Width {width}px is below {spec.name} minimum requirement of {spec.min_width}px"
+        )
+
+    if file_size_bytes is not None:
+        mb = file_size_bytes / (1024 * 1024)
+        if mb > spec.max_file_size_mb:
+            warnings.append(
+                f"File size {mb:.1f}MB exceeds {spec.name} limit of {spec.max_file_size_mb}MB"
+            )
 
     # Check if resolution matches any supported aspect ratio
     if width and height:
@@ -155,6 +182,40 @@ def validate_output(
             )
 
     return warnings
+
+
+def recommend_platform(width: int, height: int, duration: float) -> list[str]:
+    """Return compatible platforms ranked by fit, using the specs registry.
+
+    Checks aspect ratio and duration limits against every registered platform.
+    Returns an empty list when no platform matches.
+    """
+    if width <= 0 or height <= 0:
+        return []
+
+    actual_ratio = width / height
+    _RATIO_MAP = {
+        AspectRatio.LANDSCAPE: 16 / 9,
+        AspectRatio.PORTRAIT: 9 / 16,
+        AspectRatio.SQUARE: 1.0,
+    }
+    TOLERANCE = 0.1
+
+    matches: list[str] = []
+    for key, spec in PLATFORM_SPECS.items():
+        # Duration gate
+        if spec.max_duration_seconds is not None and duration > spec.max_duration_seconds:
+            continue
+        # Aspect ratio gate
+        ratio_ok = any(
+            abs(actual_ratio - _RATIO_MAP[ar]) < TOLERANCE
+            for ar in spec.aspect_ratios
+        )
+        if not ratio_ok:
+            continue
+        matches.append(key)
+
+    return matches
 
 
 def list_platforms() -> list[str]:

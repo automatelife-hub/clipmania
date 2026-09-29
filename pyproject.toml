@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "clipmania"
-version = "0.1.0"
-description = "Multi-platform video clipping pipeline powered by Streamlink, yt-dlp, and FFmpeg"
+version = "0.2.0"
+description = "Multi-platform video clipping and AI smart-layout pipeline powered by Streamlink, yt-dlp, and FFmpeg"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
@@ -17,6 +17,13 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0", "pytest-mock"]
+smart = ["opencv-python-headless>=4.8.0", "numpy>=1.24.0"]
+editing = ["moviepy>=1.0.3"]
+all = [
+    "opencv-python-headless>=4.8.0",
+    "numpy>=1.24.0",
+    "moviepy>=1.0.3",
+]
 
 [project.scripts]
 clipmania = "clipmania.cli:main"

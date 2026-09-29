@@ -81,6 +81,68 @@ class TestValidateOutput:
         )
         assert warnings == []
 
+    def test_min_width_warning(self):
+        spec = get_spec("tiktok")
+        warnings = validate_output(
+            {"duration": 30.0, "width": 480, "height": 854},
+            spec,
+        )
+        assert any("minimum requirement" in w for w in warnings)
+
+    def test_file_size_limit_exceeded(self):
+        spec = get_spec("kick")
+        large_size = 300 * 1024 * 1024  # 300MB > 250MB
+        warnings = validate_output(
+            {"duration": 30.0, "width": 1920, "height": 1080},
+            spec,
+            file_size_bytes=large_size,
+        )
+        assert any("File size" in w for w in warnings)
+
+
+class TestRecommendPlatform:
+    def test_recommend_vertical_short(self):
+        from clipmania.platforms import recommend_platform
+        result = recommend_platform(1080, 1920, 45.0)
+        assert "tiktok" in result
+        assert "youtube_shorts" in result
+
+    def test_recommend_vertical_long(self):
+        from clipmania.platforms import recommend_platform
+        result = recommend_platform(1080, 1920, 90.0)
+        assert "x" in result
+        # TikTok and YouTube Shorts are 60s max, should be excluded
+        assert "tiktok" not in result
+        assert "youtube_shorts" not in result
+
+    def test_recommend_horizontal_short(self):
+        from clipmania.platforms import recommend_platform
+        result = recommend_platform(1920, 1080, 45.0)
+        assert "kick" in result
+        assert "twitch" in result
+
+    def test_recommend_horizontal_long(self):
+        from clipmania.platforms import recommend_platform
+        result = recommend_platform(1920, 1080, 120.0)
+        assert "twitch" in result
+        # kick is 60s max
+        assert "kick" not in result
+
+    def test_recommend_vertical_over_140s(self):
+        """A 141s vertical video exceeds X's 140s limit — no platform fits."""
+        from clipmania.platforms import recommend_platform
+        result = recommend_platform(1080, 1920, 141.0)
+        assert "x" not in result
+
+    def test_recommend_returns_empty_for_zero_dimensions(self):
+        from clipmania.platforms import recommend_platform
+        assert recommend_platform(0, 0, 30.0) == []
+
+    def test_recommend_returns_list(self):
+        from clipmania.platforms import recommend_platform
+        result = recommend_platform(1080, 1920, 30.0)
+        assert isinstance(result, list)
+
 
 class TestListPlatforms:
     def test_returns_sorted(self):

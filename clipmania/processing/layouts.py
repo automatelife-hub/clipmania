@@ -19,6 +19,7 @@ class Layout(Enum):
     VERTICAL_BLUR = "vertical-blur"
     VERTICAL_STACKED = "vertical-stacked"
     VERTICAL_CROP = "vertical-crop"
+    VERTICAL_SMART = "vertical-smart"
 
     @classmethod
     def from_string(cls, value: str) -> Layout:
@@ -70,12 +71,16 @@ def build_filter_for_layout(
         )
         return filter_str, True
 
-    if layout == Layout.HORIZONTAL:
+    if layout in (Layout.HORIZONTAL,):
         filter_str = (
             "scale=1920:1080:force_original_aspect_ratio=decrease,"
             "pad=1920:1080:(ow-iw)/2:(oh-ih)/2"
         )
         return filter_str, False
+
+    if layout == Layout.VERTICAL_SMART:
+        # Default baseline filter for smart layout (blur fallback)
+        return build_filter_for_layout(Layout.VERTICAL_BLUR)
 
     raise ValueError(f"Unsupported layout: {layout}")
 
@@ -112,27 +117,51 @@ def apply_layout(
     console.print(f"[bold blue]🖼  Layout:[/] {layout.value}  "
                   f"({info.width}×{info.height} → target)")
 
-    builders = {
-        Layout.HORIZONTAL: _build_horizontal,
-        Layout.VERTICAL_BLUR: _build_vertical_blur,
-        Layout.VERTICAL_STACKED: _build_vertical_stacked,
-        Layout.VERTICAL_CROP: _build_vertical_crop,
-    }
-
-    builder = builders[layout]
-
-    if layout == Layout.VERTICAL_STACKED:
-        args = builder(
+    if layout == Layout.VERTICAL_SMART:
+        from .smart_crop import detect_facecam
+        console.print("[dim]   Scanning video frames for streamer facecam…[/]")
+        detection = detect_facecam(input_path)
+        if detection:
+            console.print(
+                f"[bold green]🎯 Smart detection:[/] Found webcam in {detection.position} "
+                f"({detection.cam_crop}, confidence={detection.confidence * 100:.0f}%)"
+            )
+            args = _build_vertical_stacked(
+                input_path, output_path, crf, preset,
+                audio_codec=audio_codec, audio_bitrate=audio_bitrate,
+                cam_crop=detection.cam_crop, game_crop=detection.game_crop,
+                cam_height=cam_height, game_height=game_height,
+            )
+        else:
+            console.print("[dim]   No webcam detected — falling back to vertical-blur layout.[/]")
+            args = _build_vertical_blur(
+                input_path, output_path, crf, preset,
+                audio_codec=audio_codec, audio_bitrate=audio_bitrate,
+            )
+    elif layout == Layout.VERTICAL_STACKED:
+        args = _build_vertical_stacked(
             input_path, output_path, crf, preset,
             audio_codec=audio_codec, audio_bitrate=audio_bitrate,
             cam_crop=cam_crop, game_crop=game_crop,
             cam_height=cam_height, game_height=game_height,
         )
-    else:
-        args = builder(
+    elif layout == Layout.HORIZONTAL:
+        args = _build_horizontal(
             input_path, output_path, crf, preset,
             audio_codec=audio_codec, audio_bitrate=audio_bitrate,
         )
+    elif layout == Layout.VERTICAL_BLUR:
+        args = _build_vertical_blur(
+            input_path, output_path, crf, preset,
+            audio_codec=audio_codec, audio_bitrate=audio_bitrate,
+        )
+    elif layout == Layout.VERTICAL_CROP:
+        args = _build_vertical_crop(
+            input_path, output_path, crf, preset,
+            audio_codec=audio_codec, audio_bitrate=audio_bitrate,
+        )
+    else:
+        raise ValueError(f"Unknown layout: {layout}")
 
     run_ffmpeg_with_progress(args, duration=info.duration, description=f"Applying {layout.value}")
     console.print(f"[green]✓[/] Layout applied → {output_path}")
@@ -256,5 +285,6 @@ def get_layout_filter(layout: Layout) -> str:
         Layout.VERTICAL_BLUR: "Blurred background fill, 1080×1920 portrait",
         Layout.VERTICAL_STACKED: "Facecam + gameplay vertical stack",
         Layout.VERTICAL_CROP: "Centre crop to 9:16 portrait",
+        Layout.VERTICAL_SMART: "AI facecam detection with stacked layout (or blur fallback)",
     }
     return descriptions.get(layout, layout.value)

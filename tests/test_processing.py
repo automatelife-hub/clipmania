@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -196,3 +197,6 @@ class TestFindOutputExtension:
         actual = tmp_path / "test.webm"
         actual.write_text("data")
         assert _find_output(target) == actual
+
+
+
