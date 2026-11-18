@@ -17,6 +17,7 @@ class Platform(Enum):
     KICK = "kick"
     TIKTOK = "tiktok"
     X = "x"
+    RUMBLE = "rumble"
     UNKNOWN = "unknown"
 
 
@@ -114,6 +115,8 @@ _PLATFORM_DOMAINS: dict[str, Platform] = {
     "www.twitter.com": Platform.X,
     "x.com": Platform.X,
     "www.x.com": Platform.X,
+    "rumble.com": Platform.RUMBLE,
+    "www.rumble.com": Platform.RUMBLE,
 }
 
 
@@ -143,6 +146,12 @@ def extract_channel(url: str) -> str:
             raw = qs.get("v", "unknown")
         # /shorts/<id>, /embed/<id>, /live/<id> → video ID from path
         elif parts[0] in ("shorts", "embed", "live") and len(parts) > 1:
+            raw = parts[1]
+        else:
+            raw = parts[0]
+    elif platform == Platform.RUMBLE:
+        # /c/<channel> → channel; /user/<channel> → channel
+        if parts[0] in ("c", "user") and len(parts) > 1:
             raw = parts[1]
         else:
             raw = parts[0]

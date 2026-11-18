@@ -114,6 +114,8 @@ class TestDetectPlatform:
         ("https://www.tiktok.com/@user/video/123", Platform.TIKTOK),
         ("https://twitter.com/user/status/123", Platform.X),
         ("https://x.com/user/status/123", Platform.X),
+        ("https://rumble.com/c/Bongino", Platform.RUMBLE),
+        ("https://www.rumble.com/user/GlennGreenwald", Platform.RUMBLE),
         ("https://example.com/video", Platform.UNKNOWN),
     ])
     def test_detection(self, url, expected):
@@ -150,6 +152,11 @@ class TestExtractChannel:
 
     def test_tiktok(self):
         assert extract_channel("https://tiktok.com/@charli") == "charli"
+
+    def test_rumble(self):
+        assert extract_channel("https://rumble.com/c/Bongino") == "Bongino"
+        assert extract_channel("https://rumble.com/user/GlennGreenwald") == "GlennGreenwald"
+        assert extract_channel("https://rumble.com/v12345-live.html") == "v12345-live.html"
 
     def test_empty_path(self):
         assert extract_channel("https://twitch.tv/") == "unknown"

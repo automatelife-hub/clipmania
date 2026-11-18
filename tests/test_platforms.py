@@ -14,7 +14,7 @@ class TestPlatformRegistry:
     """Platform specs are complete and consistent."""
 
     def test_all_expected_platforms_exist(self):
-        expected = {"tiktok", "youtube", "youtube_shorts", "kick", "twitch", "x"}
+        expected = {"tiktok", "youtube", "youtube_shorts", "kick", "twitch", "x", "rumble"}
         assert expected == set(PLATFORM_SPECS.keys())
 
     def test_all_specs_have_required_fields(self):
@@ -37,6 +37,12 @@ class TestGetSpec:
     def test_valid_platform(self):
         spec = get_spec("tiktok")
         assert spec.name == "TikTok"
+
+    def test_rumble_spec_exists(self):
+        spec = get_spec("rumble")
+        assert spec.name == "Rumble"
+        assert spec.width == 1920
+        assert spec.height == 1080
 
     def test_case_insensitive(self):
         spec = get_spec("TikTok")
@@ -149,4 +155,4 @@ class TestListPlatforms:
         assert platforms == sorted(platforms)
 
     def test_count(self):
-        assert len(list_platforms()) == 6
+        assert len(list_platforms()) == 7
