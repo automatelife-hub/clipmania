@@ -43,9 +43,10 @@ class TestCliBasic:
         assert "wizard" in result.output
         assert "validate" in result.output
         assert "batch" in result.output
+        assert "watch" in result.output
 
     @pytest.mark.parametrize("cmd", [
-        "clip", "download", "live-start", "clip-now", "live-stop", "convert", "info", "montage", "wizard", "validate", "batch"
+        "clip", "download", "live-start", "clip-now", "live-stop", "convert", "info", "montage", "wizard", "validate", "batch", "watch"
     ])
     def test_subcommand_help(self, runner, cmd):
         result = runner.invoke(main, [cmd, "--help"])
@@ -216,3 +217,28 @@ class TestCliValidation:
         output_arg = mock_clip_buf.call_args[1].get("output_path")
         assert output_arg is not None
         assert str(tmp_path / "custom_out") in str(output_arg)
+
+    @patch("clipmania.ingestion.live_watcher.LiveWatcher.run")
+    def test_watch_cli_invocation(self, mock_run, runner):
+        result = runner.invoke(main, [
+            "watch", "https://rumble.com/c/Bongino",
+            "--check-interval", "15",
+            "--clip-interval", "300",
+            "--window", "60",
+        ])
+        assert result.exit_code == 0
+        mock_run.assert_called_once()
+
+    def test_watch_cli_invalid_intervals_rejected(self, runner):
+        res1 = runner.invoke(main, ["watch", "https://twitch.tv/user", "--check-interval", "0"])
+        assert res1.exit_code != 0
+        assert "must be positive" in res1.output
+
+        res2 = runner.invoke(main, ["watch", "https://twitch.tv/user", "--clip-interval", "-5"])
+        assert res2.exit_code != 0
+        assert "must be positive" in res2.output
+
+        res3 = runner.invoke(main, ["watch", "https://twitch.tv/user", "--window", "0"])
+        assert res3.exit_code != 0
+        assert "must be positive" in res3.output
+

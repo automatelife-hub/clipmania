@@ -738,3 +738,117 @@ def batch(ctx: click.Context, config_file: Path, workers: int, output_dir: Path 
     console.print(f"[bold green]Batch processing completed:[/] {len(results)} clips created in {out}\n")
 
 
+# ---------------------------------------------------------------------------
+# watch — continuously monitor a live channel and cut highlights
+# ---------------------------------------------------------------------------
+
+@main.command("watch")
+@click.argument("url")
+@click.option(
+    "--check-interval",
+    default=30,
+    type=int,
+    help="Seconds between stream live checks when offline (default: 30).",
+)
+@click.option(
+    "--clip-interval",
+    default=300,
+    type=int,
+    help="Seconds between automatic highlight clips when live (default: 300).",
+)
+@click.option(
+    "--window",
+    default=60,
+    type=int,
+    help="Duration in seconds of clips cut from live buffer (default: 60).",
+)
+@click.option(
+    "--cooldown",
+    default=120,
+    type=int,
+    help="Minimum seconds between generated clips (default: 120).",
+)
+@click.option(
+    "--layout",
+    type=click.Choice([l.value for l in Layout]),
+    default="vertical-smart",
+    help="Layout mode for generated clips (default: vertical-smart).",
+)
+@click.option(
+    "--platform", "-p",
+    default="tiktok",
+    help="Target platform spec for format and dimensions (default: tiktok).",
+)
+@click.option(
+    "--audio-trigger/--no-audio-trigger",
+    default=True,
+    help="Automatically cut clips on audio excitement / energy spikes.",
+)
+@click.option(
+    "--fast",
+    is_flag=True,
+    help="Use fast single-pass encoding for real-time live cutting.",
+)
+@click.pass_context
+def watch(
+    ctx: click.Context,
+    url: str,
+    check_interval: int,
+    clip_interval: int,
+    window: int,
+    cooldown: int,
+    layout: str,
+    platform: str,
+    audio_trigger: bool,
+    fast: bool,
+) -> None:
+    """Continuously monitor a creator channel (YouTube, Twitch, Kick, Rumble).
+
+    Automatically starts rolling buffering and cuts vertical highlights when they go live.
+
+    \b
+    Examples:
+      clipmania watch https://twitch.tv/shroud
+      clipmania watch https://kick.com/xqc --layout vertical-smart --window 45
+      clipmania watch https://rumble.com/c/Bongino --clip-interval 600
+    """
+    if check_interval <= 0:
+        raise click.UsageError("--check-interval must be positive.")
+    if clip_interval <= 0:
+        raise click.UsageError("--clip-interval must be positive.")
+    if window <= 0:
+        raise click.UsageError("--window must be positive.")
+    if cooldown < 0:
+        raise click.UsageError("--cooldown must be positive or zero.")
+
+    from .ingestion.live_watcher import LiveWatcher
+    from .processing.live_cutter import LiveCutterConfig
+
+    cfg: ClipManiaConfig = ctx.obj["config"]
+    out_dir = Path(cfg.output_dir)
+
+    cutter_cfg = LiveCutterConfig(
+        clip_window_seconds=window,
+        interval_seconds=clip_interval,
+        enable_audio_trigger=audio_trigger,
+        cooldown_seconds=cooldown,
+        layout=Layout(layout),
+        platform=platform,
+        fast_single_pass=fast,
+    )
+
+    watcher = LiveWatcher(
+        url=url,
+        check_interval=check_interval,
+        buffer_dir=cfg.buffer_dir,
+        output_dir=out_dir,
+        cutter_config=cutter_cfg,
+        segment_duration=cfg.segment_duration,
+        playlist_size=cfg.playlist_size,
+        quality=cfg.quality,
+    )
+
+    watcher.run()
+
+
+
