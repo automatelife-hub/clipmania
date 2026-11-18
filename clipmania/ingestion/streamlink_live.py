@@ -176,6 +176,8 @@ def start_live_buffer(
     segment_duration: int = 5,
     playlist_size: int = 24,
     quality: str = "best",
+    retry_streams: int = 5,
+    retry_max: int = 0,
 ) -> BufferState:
     """Start a rolling HLS buffer for a live stream.
 
@@ -220,7 +222,14 @@ def start_live_buffer(
                       f"({playlist_size} × {segment_duration}s segments)")
 
         # Build commands
-        sl_cmd = ["streamlink", url, quality, "-O"]
+        sl_cmd = [
+            "streamlink",
+            "--retry-streams", str(retry_streams),
+            "--retry-max", str(retry_max),
+            url,
+            quality,
+            "-O",
+        ]
 
         ff_cmd = [
             "ffmpeg", "-y",
