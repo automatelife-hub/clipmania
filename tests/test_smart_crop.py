@@ -3,13 +3,10 @@
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from clipmania.processing.layouts import Layout, build_filter_for_layout
 from clipmania.processing.smart_crop import (
     FacecamDetectionResult,
     detect_facecam,
-    detect_speaker_x_center,
     has_opencv,
 )
 
@@ -34,11 +31,6 @@ class TestSmartCropDetection:
     @patch("clipmania.processing.smart_crop.has_opencv", return_value=False)
     def test_detect_facecam_without_opencv_returns_none(self, _mock):
         result = detect_facecam(Path("dummy.mp4"))
-        assert result is None
-
-    @patch("clipmania.processing.smart_crop.has_opencv", return_value=False)
-    def test_detect_speaker_without_opencv_returns_none(self, _mock):
-        result = detect_speaker_x_center(Path("dummy.mp4"))
         assert result is None
 
     @patch("clipmania.processing.smart_crop.has_opencv", return_value=True)

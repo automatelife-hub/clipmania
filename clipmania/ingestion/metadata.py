@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import subprocess
 from dataclasses import dataclass, field
-from pathlib import Path
 
 
 @dataclass
@@ -58,6 +57,7 @@ def fetch_metadata(url: str) -> SourceMetadata:
         cmd,
         capture_output=True,
         text=True,
+        timeout=60,  # H-5: Prevent indefinite hangs
     )
 
     if result.returncode != 0:
@@ -93,10 +93,20 @@ def fetch_metadata(url: str) -> SourceMetadata:
                 res_str += f"{int(fps)}"
             resolutions_set.add(res_str)
 
-    # Sort resolutions (e.g. 1080p60, 720p, etc.)
+    # Sort resolutions by height (the number before 'p'), descending
+    def _res_sort_key(r: str) -> tuple[int, int]:
+        """Return (height, fps) for sorting; e.g. '720p60' → (720, 60)."""
+        import re as _re
+        m = _re.match(r"(\d+)p(\d+)?", r)
+        if m:
+            height = int(m.group(1))
+            fps = int(m.group(2)) if m.group(2) else 0
+            return (height, fps)
+        return (0, 0)
+
     sorted_resolutions = sorted(
         resolutions_set,
-        key=lambda r: int("".join(filter(str.isdigit, r)) or "0"),
+        key=_res_sort_key,
         reverse=True,
     )
 

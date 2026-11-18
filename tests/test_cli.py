@@ -106,6 +106,7 @@ class TestCliValidation:
         ])
         assert result.exit_code == 0
         assert "Highlight Moment" in result.output
+        assert fake_raw.exists() is True, "C-1 regression: raw file was deleted!"
         mock_clip_sec.assert_called_once()
         # Verify timestamps passed to clip_section
         call_args = mock_clip_sec.call_args[0]
@@ -173,3 +174,45 @@ class TestCliValidation:
         assert result.exit_code == 0
         assert "2 clips created" in result.output
         mock_process.assert_called_once()
+
+    @patch("clipmania.ingestion.ytdlp.clip_section")
+    def test_clip_raw_preserves_file(self, mock_clip, runner, tmp_path):
+        """C-1 regression test: clip --raw does not delete the downloaded file in finally."""
+        raw_file = tmp_path / "_raw_user.mp4"
+        raw_file.write_text("mp4 content")
+        mock_clip.return_value = raw_file
+
+        result = runner.invoke(main, [
+            "--output-dir", str(tmp_path),
+            "clip", "https://twitch.tv/user",
+            "--start", "1:00", "--end", "2:00",
+            "--raw",
+        ])
+        assert result.exit_code == 0
+        assert "Raw clip saved" in result.output
+        assert raw_file.exists() is True
+
+    @patch("clipmania.ingestion.streamlink_live.get_buffer_status")
+    @patch("clipmania.ingestion.streamlink_live.clip_from_buffer")
+    def test_clip_now_raw_uses_output_dir(self, mock_clip_buf, mock_status, runner, tmp_path):
+        """M-8 regression test: clip-now --raw saves to output_dir, not CWD."""
+        from clipmania.ingestion.streamlink_live import BufferState
+        mock_status.return_value = BufferState(
+            url="https://twitch.tv/shroud",
+            channel="shroud",
+            platform="twitch",
+            buffer_dir=str(tmp_path),
+            playlist_path=str(tmp_path / "live.m3u8"),
+        )
+        fake_out = tmp_path / "custom_out" / "clip.mp4"
+        mock_clip_buf.return_value = fake_out
+
+        result = runner.invoke(main, [
+            "--output-dir", str(tmp_path / "custom_out"),
+            "clip-now", "--seconds", "30", "--raw",
+        ])
+        assert result.exit_code == 0
+        assert mock_clip_buf.called
+        output_arg = mock_clip_buf.call_args[1].get("output_path")
+        assert output_arg is not None
+        assert str(tmp_path / "custom_out") in str(output_arg)

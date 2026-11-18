@@ -1,5 +1,9 @@
 """OpenCV-powered computer vision for intelligent crop and facecam detection."""
 
+# TODO: Consolidate with autocrop.py — both modules have similar detect_facecam()
+# implementations but return different types (FacecamDetectionResult vs CropRegion).
+# See qa_audit_report.md for details.
+
 from __future__ import annotations
 
 import math
@@ -187,54 +191,3 @@ def detect_facecam(
         position=pos,
     )
 
-
-def detect_speaker_x_center(
-    video_path: Path,
-    sample_duration: float = 10.0,
-    num_samples: int = 5,
-) -> int | None:
-    """Return the median horizontal center of detected faces for vertical-crop centering."""
-    if not has_opencv():
-        return None
-
-    info = probe(video_path)
-    width, height = info.width, info.height
-    duration = info.duration or 30.0
-
-    cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-    face_cascade = cv2.CascadeClassifier(cascade_path)
-    if face_cascade.empty():
-        return None
-
-    cap = cv2.VideoCapture(str(video_path))
-    if not cap.isOpened():
-        return None
-
-    step = min(duration, sample_duration) / max(1, num_samples)
-    x_centers: list[int] = []
-
-    try:
-        for i in range(num_samples):
-            cap.set(cv2.CAP_PROP_POS_MSEC, i * step * 1000.0)
-            ret, frame = cap.read()
-            if not ret or frame is None:
-                continue
-
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            faces = face_cascade.detectMultiScale(
-                gray,
-                scaleFactor=1.15,
-                minNeighbors=4,
-                minSize=(int(height * 0.08), int(height * 0.08)),
-            )
-            for (x, y, w, h) in faces:
-                x_centers.append(int(x + w / 2))
-    finally:
-        cap.release()
-
-    if not x_centers:
-        return None
-
-    x_centers.sort()
-    median_x = x_centers[len(x_centers) // 2]
-    return max(0, min(median_x, width))

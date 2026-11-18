@@ -6,7 +6,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from clipmania.ingestion.metadata import (
-    SourceMetadata,
     VideoChapter,
     fetch_metadata,
     find_chapter,
@@ -86,6 +85,22 @@ class TestFetchMetadata:
         assert meta.chapters[0].title == "Start"
         assert "1080p60" in meta.available_resolutions
         assert "720p" in meta.available_resolutions
+
+    @patch("subprocess.run")
+    def test_resolution_sorting_order(self, mock_run):
+        """Regression test for resolution sort bug: 720p60 must sort BELOW 1080p."""
+        mock_output = {
+            "title": "Resolutions Test",
+            "formats": [
+                {"height": 720, "fps": 60},   # "720p60"
+                {"height": 1080, "fps": 30},  # "1080p"
+                {"height": 480, "fps": 30},   # "480p"
+                {"height": 720, "fps": 30},   # "720p"
+            ],
+        }
+        mock_run.return_value = MagicMock(returncode=0, stdout=json.dumps(mock_output), stderr="")
+        meta = fetch_metadata("https://example.com/video")
+        assert meta.available_resolutions == ["1080p", "720p60", "720p", "480p"]
 
     @patch("subprocess.run")
     def test_fetch_failure_raises(self, mock_run):

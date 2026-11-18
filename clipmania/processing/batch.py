@@ -102,13 +102,23 @@ def _execute_single_job(
     if not start or not end:
         raise ValueError(f"Job for {job.url} missing start/end timestamps or chapter.")
 
+    # M-7: Validate timestamps before calling yt-dlp
+    from ..utils import parse_timestamp
+    try:
+        start_sec = parse_timestamp(start)
+        end_sec = parse_timestamp(end)
+    except ValueError as e:
+        raise ValueError(f"Invalid timestamp in job for {job.url}: {e}")
+    if start_sec >= end_sec:
+        raise ValueError(f"Start ({start}) must be before end ({end}) in job for {job.url}.")
+
     channel = extract_channel(job.url)
     raw_name = f"_raw_{uuid4().hex}.mp4"
     raw_path = out_dir / raw_name
-
-    actual_raw = clip_section(job.url, start, end, raw_path)
+    actual_raw: Path | None = None
 
     try:
+        actual_raw = clip_section(job.url, start, end, raw_path)
         layout_str = job.layout or cfg.default_layout
         layout_mode = Layout.from_string(layout_str)
         final = process_clip(
@@ -122,14 +132,20 @@ def _execute_single_job(
 
         # Honour user-specified output filename if provided
         if job.output_filename:
-            requested = out_dir / job.output_filename
+            # H-2: Sanitize to prevent path traversal
+            safe_name = Path(job.output_filename).name
+            if not safe_name:
+                safe_name = final.name
+            requested = out_dir / safe_name
             requested.parent.mkdir(parents=True, exist_ok=True)
-            final.rename(requested)
+            final.replace(requested)  # L-1: Use replace() not rename() on Windows
             final = requested
 
         return final
     finally:
-        actual_raw.unlink(missing_ok=True)
+        raw_path.unlink(missing_ok=True)
+        if actual_raw is not None and actual_raw != raw_path:
+            actual_raw.unlink(missing_ok=True)
 
 
 def process_batch(
@@ -161,7 +177,7 @@ def process_batch(
     ) as progress:
         task_id = progress.add_task("Clipping jobs", total=len(jobs))
 
-        with ThreadPoolExecutor(max_workers=max(1, workers)) as executor:
+        with ThreadPoolExecutor(max_workers=max(1, min(workers, 16))) as executor:
             future_to_job = {
                 executor.submit(_execute_single_job, job, out_dir, cfg): job
                 for job in jobs

@@ -1,6 +1,5 @@
 """Tests for processing, layouts, ffmpeg probe parsing, and ingestion helpers."""
 
-import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -197,6 +196,64 @@ class TestFindOutputExtension:
         actual = tmp_path / "test.webm"
         actual.write_text("data")
         assert _find_output(target) == actual
+
+    def test_ignores_part_and_temp_files(self, tmp_path):
+        """H-8 regression test: Incomplete .part/.ytdl files must never be chosen."""
+        target = tmp_path / "test.mp4"
+        part_file = tmp_path / "test.part"
+        part_file.write_text("incomplete data")
+        ytdl_file = tmp_path / "test.ytdl"
+        ytdl_file.write_text("incomplete data")
+
+        # When only .part files exist, it shouldn't return them
+        assert _find_output(target) == target
+
+        # When a valid completed file exists alongside .part, pick the completed file
+        completed = tmp_path / "test.mkv"
+        completed.write_text("complete data")
+        assert _find_output(target) == completed
+
+
+class TestClampCrop:
+    """H-10 test: dynamic crop clamping for non-1080p source resolutions."""
+
+    def test_clamp_crop_within_bounds(self):
+        from clipmania.processing.layouts import clamp_crop
+        res = clamp_crop("640:480:100:50", 1920, 1080)
+        assert res == "640:480:100:50"
+
+    def test_clamp_crop_exceeds_width(self):
+        from clipmania.processing.layouts import clamp_crop
+        # For a 1280x720 source, offset x=1280 is outside frame!
+        res = clamp_crop("640:480:1280:0", 1280, 720)
+        w, h, x, y = [int(p) for p in res.split(":")]
+        assert x + w <= 1280
+        assert y + h <= 720
+        assert x == 640
+
+    def test_clamp_crop_exceeds_both_dimensions(self):
+        from clipmania.processing.layouts import clamp_crop
+        # 1920:1080 crop on 1280x720 video
+        res = clamp_crop("1920:1080:0:0", 1280, 720)
+        assert res == "1280:720:0:0"
+
+
+class TestAudioSilentGuard:
+    """H-11 test: guard against measuring/normalizing silent video without audio streams."""
+
+    @patch("clipmania.processing.audio.probe")
+    def test_measure_loudness_raises_on_silent_video(self, mock_probe):
+        from clipmania.processing.audio import measure_loudness
+        mock_probe.return_value = MagicMock(audio_codec=None)
+        with pytest.raises(ValueError, match="has no audio stream"):
+            measure_loudness(Path("silent.mp4"))
+
+    @patch("clipmania.processing.audio.probe")
+    def test_normalize_audio_raises_on_silent_video(self, mock_probe, tmp_path):
+        from clipmania.processing.audio import normalize_audio
+        mock_probe.return_value = MagicMock(audio_codec=None)
+        with pytest.raises(ValueError, match="has no audio stream"):
+            normalize_audio(Path("silent.mp4"), tmp_path / "out.mp4")
 
 
 

@@ -10,9 +10,9 @@ from rich.console import Console
 from . import __version__
 from .config import ClipManiaConfig, load_config
 from .deps import check_all_dependencies
-from .platforms import PLATFORM_SPECS, get_spec, list_platforms
+from .platforms import list_platforms
 from .processing.layouts import Layout
-from .utils import Platform, detect_platform, extract_channel, is_live_url
+from .utils import detect_platform, extract_channel
 
 console = Console()
 
@@ -136,9 +136,10 @@ def clip(
 
     # Step 1: Download section
     raw_path = Path(cfg.output_dir) / f"_raw_{channel}.mp4"
-    actual_raw = clip_section(url, start, end, raw_path)
-
+    actual_raw: Path | None = None
     try:
+        actual_raw = clip_section(url, start, end, raw_path)
+
         if raw:
             console.print(f"[green]✓ Raw clip saved:[/] {actual_raw}")
             return
@@ -156,8 +157,12 @@ def clip(
 
         console.print(f"\n[bold green]🎬 Done![/] {final}\n")
     finally:
-        # Clean up raw file (M8: inside try/finally)
-        actual_raw.unlink(missing_ok=True)
+        # C-1: Only clean up raw file when not in --raw mode
+        # H-6: Clean up even if clip_section() partially wrote a file
+        if not raw:
+            raw_path.unlink(missing_ok=True)
+            if actual_raw is not None and actual_raw != raw_path:
+                actual_raw.unlink(missing_ok=True)
 
 
 # ---------------------------------------------------------------------------
@@ -219,7 +224,7 @@ def live_start(ctx: click.Context, url: str, quality: str | None) -> None:
 
     console.print(f"\n[bold]ClipMania[/] — Starting live buffer for [cyan]{url}[/]\n")
 
-    state = start_live_buffer(
+    start_live_buffer(
         url,
         buffer_dir=cfg.buffer_dir,
         segment_duration=cfg.segment_duration,
@@ -283,14 +288,29 @@ def clip_now(
         f"[cyan]{status.channel}[/] live buffer\n"
     )
 
-    raw_path = clip_from_buffer(
-        seconds=seconds,
-        buffer_dir=cfg.buffer_dir,
-    )
+    from .utils import safe_filename
+    from uuid import uuid4
+
+    out_dir = Path(cfg.output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
 
     if raw:
+        target = out_dir / safe_filename(status.platform, status.channel)
+        raw_path = clip_from_buffer(
+            seconds=seconds,
+            output_path=target,
+            buffer_dir=cfg.buffer_dir,
+        )
         console.print(f"[green]✓ Raw live clip saved:[/] {raw_path}")
         return
+
+    # Use a unique temporary file inside output_dir for processing
+    temp_raw = out_dir / f"_raw_{status.channel}_{uuid4().hex[:6]}.mp4"
+    raw_path = clip_from_buffer(
+        seconds=seconds,
+        output_path=temp_raw,
+        buffer_dir=cfg.buffer_dir,
+    )
 
     try:
         layout_mode = Layout.from_string(layout or cfg.default_layout)
@@ -560,6 +580,15 @@ def wizard(ctx: click.Context) -> None:
     if not end:
         end = Prompt.ask("End timestamp (e.g. 1:00, 2:00)")
 
+    # M-7: Validate timestamps before passing to yt-dlp
+    try:
+        start_sec = parse_timestamp(start)
+        end_sec = parse_timestamp(end)
+    except ValueError as e:
+        raise click.ClickException(f"Invalid timestamp: {e}")
+    if start_sec >= end_sec:
+        raise click.ClickException(f"Start ({start}) must be before end ({end}).")
+
     layout_choices = [l.value for l in Layout]
     layout = Prompt.ask(
         "Choose layout",
@@ -680,9 +709,9 @@ def validate(file: Path, platform: str | None) -> None:
 @click.argument("config_file", type=click.Path(exists=True, path_type=Path))
 @click.option(
     "--workers", "-w",
-    type=int,
+    type=click.IntRange(min=1, max=16),
     default=4,
-    help="Number of concurrent worker threads (default: 4).",
+    help="Number of concurrent worker threads (1-16, default: 4).",
 )
 @click.option(
     "--output-dir", "-o",

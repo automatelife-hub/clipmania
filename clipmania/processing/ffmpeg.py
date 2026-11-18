@@ -157,18 +157,24 @@ def run_ffmpeg(
             text=True,
         )
 
-        assert proc.stderr is not None
-        stderr_lines: list[str] = []
-        for line in proc.stderr:
-            stderr_lines.append(line)
-            match = _TIME_RE.search(line)
-            if match:
-                h, m, s = match.groups()
-                current = int(h) * 3600 + int(m) * 60 + float(s)
-                pct = min(current / duration * 100, 100.0)
-                progress_callback(pct)
+        try:
+            assert proc.stderr is not None
+            stderr_lines: list[str] = []
+            for line in proc.stderr:
+                stderr_lines.append(line)
+                match = _TIME_RE.search(line)
+                if match:
+                    h, m, s = match.groups()
+                    current = int(h) * 3600 + int(m) * 60 + float(s)
+                    pct = min(current / duration * 100, 100.0)
+                    progress_callback(pct)
 
-        proc.wait()
+            proc.wait(timeout=30)
+        except BaseException:
+            proc.kill()
+            proc.wait(timeout=5)
+            raise
+
         stderr_text = "".join(stderr_lines)
         if proc.returncode != 0:
             raise subprocess.CalledProcessError(
@@ -182,6 +188,7 @@ def run_ffmpeg(
         capture_output=True,
         text=True,
         check=True,
+        timeout=3600,  # H-5: 1 hour timeout
     )
 
 

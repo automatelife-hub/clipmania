@@ -32,6 +32,26 @@ class Layout(Enum):
         raise ValueError(f"Unknown layout {value!r}. Choose from: {valid}")
 
 
+def clamp_crop(crop_str: str, src_width: int, src_height: int) -> str:
+    """Clamp a w:h:x:y crop string to safely fit within source dimensions."""
+    from ..utils import validate_crop
+    validate_crop(crop_str)
+    parts = [int(p) for p in crop_str.split(":")]
+    w, h, x, y = parts[0], parts[1], parts[2], parts[3]
+
+    w = min(w, src_width)
+    h = min(h, src_height)
+    x = max(0, min(x, src_width - w))
+    y = max(0, min(y, src_height - h))
+
+    w = max(2, (w // 2) * 2)
+    h = max(2, (h // 2) * 2)
+    x = (x // 2) * 2
+    y = (y // 2) * 2
+
+    return f"{w}:{h}:{x}:{y}"
+
+
 def build_filter_for_layout(
     layout: Layout,
     *,
@@ -139,6 +159,8 @@ def apply_layout(
                 audio_codec=audio_codec, audio_bitrate=audio_bitrate,
             )
     elif layout == Layout.VERTICAL_STACKED:
+        cam_crop = clamp_crop(cam_crop, info.width, info.height)
+        game_crop = clamp_crop(game_crop, info.width, info.height)
         args = _build_vertical_stacked(
             input_path, output_path, crf, preset,
             audio_codec=audio_codec, audio_bitrate=audio_bitrate,
@@ -277,14 +299,3 @@ def _build_vertical_crop(
         str(output_path),
     ]
 
-
-def get_layout_filter(layout: Layout) -> str:
-    """Return a human-readable description of the filter for a layout."""
-    descriptions = {
-        Layout.HORIZONTAL: "Scale/pad to 1920×1080 landscape",
-        Layout.VERTICAL_BLUR: "Blurred background fill, 1080×1920 portrait",
-        Layout.VERTICAL_STACKED: "Facecam + gameplay vertical stack",
-        Layout.VERTICAL_CROP: "Centre crop to 9:16 portrait",
-        Layout.VERTICAL_SMART: "AI facecam detection with stacked layout (or blur fallback)",
-    }
-    return descriptions.get(layout, layout.value)

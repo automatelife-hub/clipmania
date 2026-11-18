@@ -58,6 +58,20 @@ class TestParseTimestamp:
         with pytest.raises(ValueError):
             parse_timestamp("not_a_timestamp")
 
+    def test_negative_timestamp_raises(self):
+        with pytest.raises(ValueError, match="Negative timestamp not allowed"):
+            parse_timestamp("-10")
+        with pytest.raises(ValueError, match="Negative timestamp not allowed"):
+            parse_timestamp("-1:30")
+
+    def test_nan_and_inf_raises(self):
+        with pytest.raises(ValueError, match="NaN/Infinity not allowed"):
+            parse_timestamp("nan")
+        with pytest.raises(ValueError, match="NaN/Infinity not allowed"):
+            parse_timestamp("inf")
+        with pytest.raises(ValueError, match="NaN/Infinity not allowed"):
+            parse_timestamp("-inf")
+
     def test_too_many_colons_raises(self):
         with pytest.raises(ValueError):
             parse_timestamp("1:2:3:4")
@@ -140,6 +154,12 @@ class TestExtractChannel:
     def test_empty_path(self):
         assert extract_channel("https://twitch.tv/") == "unknown"
 
+    def test_sanitizes_windows_unsafe_chars(self):
+        # H-12: Channel names with : or ? or * should be sanitized
+        assert ":" not in extract_channel("https://twitch.tv/user:bad")
+        assert "?" not in extract_channel("https://kick.com/user?query=1")
+        assert "*" not in extract_channel("https://twitch.tv/user*star")
+
 
 # ---------------------------------------------------------------------------
 # is_live_url
@@ -184,6 +204,11 @@ class TestSafeFilename:
         # m5 fix: ensure sanitized channel name is actually present
         assert "user_with_bad_chars" in name
 
+    def test_uniqueness_no_collision(self):
+        name1 = safe_filename("tiktok", "user")
+        name2 = safe_filename("tiktok", "user")
+        assert name1 != name2
+
 
 # ---------------------------------------------------------------------------
 # validate_crop
@@ -205,3 +230,12 @@ class TestValidateCrop:
     def test_invalid_crop_raises(self, bad_val):
         with pytest.raises(ValueError, match="Invalid crop format"):
             validate_crop(bad_val)
+
+    @pytest.mark.parametrize("zero_val", [
+        "0:0:0:0",
+        "0:480:0:0",
+        "640:0:0:0",
+    ])
+    def test_zero_dimensions_crop_raises(self, zero_val):
+        with pytest.raises(ValueError, match="Invalid crop dimensions"):
+            validate_crop(zero_val)

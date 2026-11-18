@@ -41,34 +41,47 @@ def parse_timestamp(ts: str) -> float:
       - HH:MM:SS:        ``"1:02:30"`` → 3750.0
       - Human-readable:  ``"1h2m3s"``, ``"1m30s"``, ``"30s"``
     """
+    import math as _math
+
     ts = ts.strip()
+    result: float | None = None
 
     # Try colon-separated first  (SS | MM:SS | HH:MM:SS)
     if ":" in ts:
         parts = ts.split(":")
         if len(parts) == 2:
             m, s = parts
-            return int(m) * 60 + float(s)
-        if len(parts) == 3:
+            result = int(m) * 60 + float(s)
+        elif len(parts) == 3:
             h, m, s = parts
-            return int(h) * 3600 + int(m) * 60 + float(s)
-        raise ValueError(f"Invalid timestamp format: {ts!r}")
+            result = int(h) * 3600 + int(m) * 60 + float(s)
+        else:
+            raise ValueError(f"Invalid timestamp format: {ts!r}")
+    else:
+        # Try human-readable  (1h2m3s, 5m, 30s, etc.)
+        match = _HMS_RE.fullmatch(ts)
+        if match and any(match.group(g) for g in ("h", "m", "s")):
+            h = int(match.group("h") or 0)
+            m = int(match.group("m") or 0)
+            s = float(match.group("s") or 0)
+            result = h * 3600 + m * 60 + s
+        else:
+            # Try bare number (seconds)
+            try:
+                result = float(ts)
+            except ValueError:
+                pass
 
-    # Try human-readable  (1h2m3s, 5m, 30s, etc.)
-    match = _HMS_RE.fullmatch(ts)
-    if match and any(match.group(g) for g in ("h", "m", "s")):
-        h = int(match.group("h") or 0)
-        m = int(match.group("m") or 0)
-        s = float(match.group("s") or 0)
-        return h * 3600 + m * 60 + s
+    if result is None:
+        raise ValueError(f"Cannot parse timestamp: {ts!r}")
 
-    # Try bare number (seconds)
-    try:
-        return float(ts)
-    except ValueError:
-        pass
+    # M-3: Reject negative, NaN, and infinite values
+    if _math.isnan(result) or _math.isinf(result):
+        raise ValueError(f"Invalid timestamp value: {ts!r} (NaN/Infinity not allowed)")
+    if result < 0:
+        raise ValueError(f"Negative timestamp not allowed: {ts!r}")
 
-    raise ValueError(f"Cannot parse timestamp: {ts!r}")
+    return result
 
 
 def format_timestamp(seconds: float) -> str:
@@ -121,19 +134,24 @@ def extract_channel(url: str) -> str:
     if platform == Platform.YOUTUBE:
         # /@channel → channel; /c/channel → channel
         if parts[0].startswith("@"):
-            return parts[0].lstrip("@")
-        if parts[0] in ("c", "channel", "user") and len(parts) > 1:
-            return parts[1]
+            raw = parts[0].lstrip("@")
+        elif parts[0] in ("c", "channel", "user") and len(parts) > 1:
+            raw = parts[1]
         # /watch?v=xxx → video ID from query params
-        if parts[0] == "watch":
+        elif parts[0] == "watch":
             qs = dict(p.split("=", 1) for p in (parsed.query or "").split("&") if "=" in p)
-            return qs.get("v", "unknown")
+            raw = qs.get("v", "unknown")
         # /shorts/<id>, /embed/<id>, /live/<id> → video ID from path
-        if parts[0] in ("shorts", "embed", "live") and len(parts) > 1:
-            return parts[1]
-        return parts[0]
-    # Twitch, Kick, TikTok, X: first path segment is typically the user
-    return parts[0].lstrip("@")
+        elif parts[0] in ("shorts", "embed", "live") and len(parts) > 1:
+            raw = parts[1]
+        else:
+            raw = parts[0]
+    else:
+        # Twitch, Kick, TikTok, X: first path segment is typically the user
+        raw = parts[0].lstrip("@")
+
+    # H-12: Sanitize for Windows filesystem safety
+    return _UNSAFE_RE.sub("_", raw)[:80] or "unknown"
 
 
 # Segments that indicate a VOD/saved video rather than a live channel page.
@@ -165,11 +183,13 @@ def safe_filename(
     channel: str = "clip",
     ext: str = ".mp4",
 ) -> str:
-    """Generate a timestamped filename: ``{platform}_{channel}_{YYYYMMDD_HHmmss}.mp4``."""
+    """Generate a timestamped filename: ``{platform}_{channel}_{YYYYMMDD_HHmmss_ffffff}_{uuid[:6]}.mp4``."""
+    from uuid import uuid4
     plat = platform.value if isinstance(platform, Platform) else str(platform)
     clean_channel = _UNSAFE_RE.sub("_", channel)[:40]
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    return f"{plat}_{clean_channel}_{ts}{ext}"
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    uid = uuid4().hex[:6]
+    return f"{plat}_{clean_channel}_{ts}_{uid}{ext}"
 
 
 # ---------------------------------------------------------------------------
@@ -182,12 +202,18 @@ _CROP_RE = re.compile(r"^\d+:\d+:\d+:\d+$")
 def validate_crop(value: str) -> str:
     """Validate an FFmpeg crop parameter string (``w:h:x:y``).
 
-    Raises :class:`ValueError` if the format is invalid, preventing
-    injection of arbitrary FFmpeg filter nodes.
+    Raises :class:`ValueError` if the format is invalid or dimensions are zero,
+    preventing injection of arbitrary FFmpeg filter nodes.
     """
     if not _CROP_RE.fullmatch(value.strip()):
         raise ValueError(
             f"Invalid crop format: {value!r}. Expected w:h:x:y (e.g. '640:480:1280:0')"
+        )
+    parts = [int(p) for p in value.strip().split(":")]
+    w, h = parts[0], parts[1]
+    if w <= 0 or h <= 0:
+        raise ValueError(
+            f"Invalid crop dimensions: width={w}, height={h}. Both must be > 0."
         )
     return value.strip()
 

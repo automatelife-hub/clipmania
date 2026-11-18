@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import subprocess
 from pathlib import Path
 
@@ -82,24 +81,34 @@ def clip_section(
             text=True,
         )
 
-        assert proc.stdout is not None
-        for line in proc.stdout:
-            line = line.strip()
-            # yt-dlp progress lines look like: [download]  45.2% of ...
-            if "[download]" in line and "%" in line:
-                try:
-                    pct_str = line.split("%")[0].rsplit(None, 1)[-1]
-                    pct = float(pct_str)
-                    progress.update(task, completed=pct)
-                except (ValueError, IndexError):
-                    pass
+        output_lines: list[str] = []
+        try:
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                line = line.strip()
+                if line:
+                    output_lines.append(line)
+                    if len(output_lines) > 50:
+                        output_lines.pop(0)
+                # yt-dlp progress lines look like: [download]  45.2% of ...
+                if "[download]" in line and "%" in line:
+                    try:
+                        pct_str = line.split("%")[0].rsplit(None, 1)[-1]
+                        pct = float(pct_str)
+                        progress.update(task, completed=pct)
+                    except (ValueError, IndexError):
+                        pass
 
-        proc.wait()
+            proc.wait(timeout=3600)  # H-5: 1 hour timeout
+        except BaseException:
+            proc.kill()
+            proc.wait(timeout=5)
+            raise
 
     if proc.returncode != 0:
+        err_detail = "\n".join(output_lines[-10:]) if output_lines else "No error details available"
         raise RuntimeError(
-            f"yt-dlp exited with code {proc.returncode}. "
-            f"Run with --verbose for details."
+            f"yt-dlp exited with code {proc.returncode}:\n{err_detail}"
         )
 
     # yt-dlp may add format extensions; find the actual output file
@@ -158,40 +167,38 @@ def download_full(
             text=True,
         )
 
-        assert proc.stdout is not None
-        for line in proc.stdout:
-            line = line.strip()
-            if "[download]" in line and "%" in line:
-                try:
-                    pct_str = line.split("%")[0].rsplit(None, 1)[-1]
-                    pct = float(pct_str)
-                    progress.update(task, completed=pct)
-                except (ValueError, IndexError):
-                    pass
+        output_lines: list[str] = []
+        try:
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                line = line.strip()
+                if line:
+                    output_lines.append(line)
+                    if len(output_lines) > 50:
+                        output_lines.pop(0)
+                if "[download]" in line and "%" in line:
+                    try:
+                        pct_str = line.split("%")[0].rsplit(None, 1)[-1]
+                        pct = float(pct_str)
+                        progress.update(task, completed=pct)
+                    except (ValueError, IndexError):
+                        pass
 
-        proc.wait()
+            proc.wait(timeout=3600)  # H-5: 1 hour timeout
+        except BaseException:
+            proc.kill()
+            proc.wait(timeout=5)
+            raise
 
     if proc.returncode != 0:
+        err_detail = "\n".join(output_lines[-10:]) if output_lines else "No error details available"
         raise RuntimeError(
-            f"yt-dlp exited with code {proc.returncode}. "
-            f"Run with --verbose for details."
+            f"yt-dlp exited with code {proc.returncode}:\n{err_detail}"
         )
 
     actual = _find_output(output_path)
     console.print(f"[green]✓[/] Saved: {actual}")
     return actual
-
-
-def get_video_info(url: str) -> dict:
-    """Retrieve video metadata without downloading.
-
-    Uses ``yt-dlp --dump-json``.
-    """
-    cmd = ["yt-dlp", "--dump-json", "--no-warnings", url]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-    if result.returncode != 0:
-        raise RuntimeError(f"yt-dlp metadata fetch failed: {result.stderr}")
-    return json.loads(result.stdout)
 
 
 def _find_output(expected: Path) -> Path:
@@ -200,13 +207,17 @@ def _find_output(expected: Path) -> Path:
         return expected
     # yt-dlp sometimes outputs a different container format (.mkv, .webm)
     # Search for any file with the same stem, preferring newest
+    # H-8: Filter out incomplete downloads (.part, .ytdl, .temp)
+    _EXCLUDE_SUFFIXES = frozenset({".part", ".ytdl", ".temp"})
     candidates = sorted(
-        expected.parent.glob(f"{expected.stem}*"),
-        key=lambda p: p.stat().st_mtime if p.is_file() else 0,
+        (
+            p for p in expected.parent.glob(f"{expected.stem}*")
+            if p.is_file() and p.suffix.lower() not in _EXCLUDE_SUFFIXES
+        ),
+        key=lambda p: p.stat().st_mtime,
         reverse=True,
     )
     for candidate in candidates:
-        if candidate.is_file():
-            return candidate
+        return candidate
     # Fall back: return expected and let the caller handle it
     return expected

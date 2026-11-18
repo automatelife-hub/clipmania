@@ -67,6 +67,20 @@ PLATFORM_SPECS: dict[str, PlatformSpec] = {
         min_width=720,
         max_file_size_mb=500,
     ),
+    "youtube": PlatformSpec(
+        name="YouTube",
+        aspect_ratios=(AspectRatio.LANDSCAPE, AspectRatio.PORTRAIT),
+        width=1920,
+        height=1080,
+        max_duration_seconds=None,
+        codec="libx264",
+        container="mp4",
+        audio_lufs=-14.0,
+        audio_bitrate="192k",
+        notes="Standard YouTube VOD, any duration",
+        min_width=480,
+        max_file_size_mb=12288,  # 12 GB for verified accounts
+    ),
     "kick": PlatformSpec(
         name="Kick Clips",
         aspect_ratios=(AspectRatio.LANDSCAPE, AspectRatio.PORTRAIT),

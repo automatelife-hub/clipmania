@@ -39,12 +39,6 @@ class CropRegion:
         validate_crop(s)
         return s
 
-    @classmethod
-    def from_str(cls, val: str) -> CropRegion:
-        """Parse from 'w:h:x:y' string."""
-        validate_crop(val)
-        parts = [int(p) for p in val.strip().split(":")]
-        return cls(w=parts[0], h=parts[1], x=parts[2], y=parts[3])
 
 
 def has_opencv() -> bool:

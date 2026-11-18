@@ -75,6 +75,10 @@ def load_config(
             )
     elif env := os.environ.get("CLIPMANIA_CONFIG"):
         path = Path(env)
+        if not path.is_file():
+            raise FileNotFoundError(
+                f"Config file specified by CLIPMANIA_CONFIG not found: {path}"
+            )
     else:
         cwd_config = Path("clipmania.toml")
         if cwd_config.is_file():
@@ -82,8 +86,14 @@ def load_config(
 
     # Parse TOML
     if path and path.is_file():
-        with open(path, "rb") as f:
-            data = tomllib.load(f)
+        try:
+            with open(path, "rb") as f:
+                data = tomllib.load(f)
+        except Exception as e:
+            raise ValueError(
+                f"Failed to parse config file {path}: {e}\n"
+                "Ensure the file contains valid TOML syntax."
+            ) from e
 
         output = data.get("output", {})
         defaults = data.get("defaults", {})

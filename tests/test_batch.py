@@ -1,8 +1,7 @@
 """Tests for clipmania.processing.batch."""
 
 import json
-from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -75,4 +74,40 @@ class TestClipJob:
     def test_output_filename_defaults_none(self):
         job = ClipJob(url="https://example.com")
         assert job.output_filename is None
+
+    @patch("clipmania.ingestion.ytdlp.clip_section")
+    @patch("clipmania.processing.batch.process_clip")
+    def test_output_filename_path_traversal_sanitized(self, mock_process, mock_clip, tmp_path):
+        """H-2 regression test: output_filename cannot escape output_dir via ../ traversal."""
+        from clipmania.processing.batch import _execute_single_job
+        from clipmania.config import ClipManiaConfig
+
+        dummy_final = tmp_path / "original.mp4"
+        dummy_final.write_text("video")
+        mock_process.return_value = dummy_final
+        mock_clip.return_value = tmp_path / "raw.mp4"
+
+        job = ClipJob(
+            url="https://youtube.com/watch?v=1",
+            start="0:10",
+            end="0:20",
+            output_filename="../../escaped.mp4",
+        )
+        res = _execute_single_job(job, tmp_path, ClipManiaConfig())
+        # Should be inside tmp_path, NOT escaped
+        assert res.parent == tmp_path
+        assert res.name == "escaped.mp4"
+
+    def test_invalid_timestamps_rejected(self, tmp_path):
+        """M-7 regression test: Invalid or reversed timestamps fail fast."""
+        from clipmania.processing.batch import _execute_single_job
+        from clipmania.config import ClipManiaConfig
+
+        job = ClipJob(url="https://youtube.com/watch?v=1", start="0:30", end="0:10")
+        with pytest.raises(ValueError, match="Start .* must be before end"):
+            _execute_single_job(job, tmp_path, ClipManiaConfig())
+
+        job_bad = ClipJob(url="https://youtube.com/watch?v=1", start="invalid", end="0:10")
+        with pytest.raises(ValueError, match="Invalid timestamp"):
+            _execute_single_job(job_bad, tmp_path, ClipManiaConfig())
 

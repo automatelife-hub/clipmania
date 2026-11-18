@@ -120,33 +120,49 @@ def _get_process_create_time(pid: int) -> float | None:
         return None
 
 
-def _acquire_lock(buffer_dir: Path) -> Path:
-    """Acquire a file-based lock to prevent concurrent buffer starts (C5)."""
+def _acquire_lock(buffer_dir: Path, max_attempts: int = 3) -> Path:
+    """Acquire a file-based lock to prevent concurrent buffer starts (C5, H-7)."""
     lock_file = _lock_path(buffer_dir)
     lock_file.parent.mkdir(parents=True, exist_ok=True)
 
-    try:
-        # Use exclusive create to make it atomic
-        fd = os.open(str(lock_file), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        os.write(fd, str(os.getpid()).encode())
-        os.close(fd)
-        return lock_file
-    except FileExistsError:
-        # Check if the lock is stale (process that created it is dead)
+    for attempt in range(max_attempts):
         try:
-            with open(lock_file) as f:
-                lock_pid = int(f.read().strip())
-            if not _is_pid_alive(lock_pid):
-                # Stale lock — remove and retry
-                lock_file.unlink(missing_ok=True)
-                return _acquire_lock(buffer_dir)
-        except (ValueError, OSError):
-            lock_file.unlink(missing_ok=True)
-            return _acquire_lock(buffer_dir)
-        raise RuntimeError(
-            "Another clipmania instance is currently starting a live buffer. "
-            "Wait for it to finish, or remove the lock file: " + str(lock_file)
-        )
+            # Use exclusive create to make it atomic
+            fd = os.open(str(lock_file), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.write(fd, str(os.getpid()).encode())
+            os.close(fd)
+            return lock_file
+        except FileExistsError:
+            # Check if the lock is stale
+            time.sleep(0.1)  # Brief wait in case another process just created it
+            try:
+                content = lock_file.read_text().strip()
+                if not content:
+                    # If still empty after sleep and older than 10s, treat as stale
+                    age = time.time() - lock_file.stat().st_mtime
+                    if age > 10.0:
+                        lock_file.unlink(missing_ok=True)
+                        continue
+                else:
+                    lock_pid = int(content)
+                    if not _is_pid_alive(lock_pid):
+                        lock_file.unlink(missing_ok=True)
+                        continue
+            except (ValueError, OSError):
+                try:
+                    if (time.time() - lock_file.stat().st_mtime) > 5.0:
+                        lock_file.unlink(missing_ok=True)
+                        continue
+                except OSError:
+                    pass
+
+            if attempt == max_attempts - 1:
+                raise RuntimeError(
+                    "Another clipmania instance is currently starting a live buffer. "
+                    "Wait for it to finish, or remove the lock file: " + str(lock_file)
+                )
+
+    raise RuntimeError("Failed to acquire lock for live buffer.")
 
 
 def _release_lock(buffer_dir: Path) -> None:
@@ -280,10 +296,15 @@ def start_live_buffer(
         time.sleep(2)
 
         if sl_proc.poll() is not None:
+            # H-3: Kill the leaked FFmpeg process
+            try:
+                ff_proc.kill()
+                ff_proc.wait(timeout=5)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
             console.print("[red]✗ Streamlink exited immediately.[/] Is the stream live?")
             console.print(f"   FFmpeg log: {stderr_log}")
             state_file.unlink(missing_ok=True)
-            stderr_fh.close()
             raise RuntimeError("Streamlink failed to start. Check the URL and stream status.")
 
         console.print(f"[green]✓ Live buffer running[/] (PIDs: sl={sl_proc.pid}, ff={ff_proc.pid})")
@@ -351,7 +372,7 @@ def clip_from_buffer(
             str(output_path),
         ]
 
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)  # H-5: 5 min timeout
     if result.returncode != 0:
         raise RuntimeError(f"FFmpeg clip extraction failed:\n{result.stderr[-500:]}")
 

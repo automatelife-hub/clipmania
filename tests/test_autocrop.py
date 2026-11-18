@@ -19,17 +19,6 @@ class TestCropRegion:
         cr = CropRegion(w=640, h=480, x=1280, y=0)
         assert cr.crop_str == "640:480:1280:0"
 
-    def test_from_str_valid(self):
-        cr = CropRegion.from_str("1920:1080:0:0")
-        assert cr.w == 1920
-        assert cr.h == 1080
-        assert cr.x == 0
-        assert cr.y == 0
-
-    def test_from_str_invalid_raises(self):
-        with pytest.raises(ValueError):
-            CropRegion.from_str("1920:1080:0")
-
 
 class TestAutoCropFunctions:
     def test_has_opencv_bool(self):

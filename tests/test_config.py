@@ -92,3 +92,16 @@ class TestLoadConfigEnv:
 
         cfg = load_config()
         assert cfg.crf == 22
+
+    def test_env_var_nonexistent_raises(self, tmp_path, monkeypatch):
+        """M-6 regression test: Nonexistent path in CLIPMANIA_CONFIG raises FileNotFoundError."""
+        monkeypatch.setenv("CLIPMANIA_CONFIG", str(tmp_path / "nonexistent.toml"))
+        with pytest.raises(FileNotFoundError, match="CLIPMANIA_CONFIG not found"):
+            load_config()
+
+    def test_malformed_toml_raises_helpful_error(self, tmp_path):
+        """M-10 regression test: Malformed TOML syntax raises ValueError with helpful message."""
+        bad_toml = tmp_path / "bad.toml"
+        bad_toml.write_text("not = [valid toml")
+        with pytest.raises(ValueError, match="valid TOML syntax"):
+            load_config(config_path=bad_toml)

@@ -100,12 +100,14 @@ def process_clip(
             )
             audio_out = layout_out
 
-        # Step 3: Validate against platform spec
+        # Step 3: Validate against platform spec (M-5: include file_size_bytes)
         if spec:
             final_info = probe(audio_out)
+            file_size = audio_out.stat().st_size
             warnings = validate_output(
                 {"duration": final_info.duration, "width": final_info.width, "height": final_info.height},
                 spec,
+                file_size_bytes=file_size,
             )
             if warnings:
                 console.print("[yellow]⚠ Platform validation warnings:[/]")
@@ -187,9 +189,14 @@ def process_clip_single_pass(
     else:
         args += ["-an"]
 
-    args += [str(output_path)]
+    tmp_output = output_path.with_name(f".tmp_{output_path.name}")
+    args += [str(tmp_output)]
 
-    run_ffmpeg_with_progress(args, duration=info.duration, description="Single-pass processing")
+    try:
+        run_ffmpeg_with_progress(args, duration=info.duration, description="Single-pass processing")
+        tmp_output.replace(output_path)
+    finally:
+        tmp_output.unlink(missing_ok=True)
 
     console.print(f"[green]✓[/] Single-pass output → {output_path}")
     return output_path

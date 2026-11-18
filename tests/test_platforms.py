@@ -4,7 +4,6 @@ import pytest
 
 from clipmania.platforms import (
     PLATFORM_SPECS,
-    AspectRatio,
     get_spec,
     list_platforms,
     validate_output,
@@ -15,7 +14,7 @@ class TestPlatformRegistry:
     """Platform specs are complete and consistent."""
 
     def test_all_expected_platforms_exist(self):
-        expected = {"tiktok", "youtube_shorts", "kick", "twitch", "x"}
+        expected = {"tiktok", "youtube", "youtube_shorts", "kick", "twitch", "x"}
         assert expected == set(PLATFORM_SPECS.keys())
 
     def test_all_specs_have_required_fields(self):
@@ -150,4 +149,4 @@ class TestListPlatforms:
         assert platforms == sorted(platforms)
 
     def test_count(self):
-        assert len(list_platforms()) == 5
+        assert len(list_platforms()) == 6

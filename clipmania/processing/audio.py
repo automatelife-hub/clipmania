@@ -37,6 +37,11 @@ def measure_loudness(input_path: Path) -> LoudnessStats:
     Runs ``ffmpeg -i <input> -af loudnorm=print_format=json -f null -``
     and parses the JSON statistics block from stderr.
     """
+    # H-11: Guard against silent / audio-less video
+    info = probe(input_path)
+    if info.audio_codec is None:
+        raise ValueError(f"Cannot measure loudness: {input_path} has no audio stream.")
+
     console.print("[dim]   Measuring loudness (pass 1/2)…[/]")
 
     result = subprocess.run(
@@ -49,6 +54,7 @@ def measure_loudness(input_path: Path) -> LoudnessStats:
         ],
         capture_output=True,
         text=True,
+        timeout=3600,  # H-5: 1 hour timeout for long videos
     )
 
     stderr = result.stderr
@@ -88,6 +94,8 @@ def normalize_audio(
     re-encoding (``-c:v copy``), which is much faster.
     """
     info = probe(input_path)
+    if info.audio_codec is None:
+        raise ValueError(f"Cannot normalize audio: {input_path} has no audio stream.")
     console.print(f"[bold blue]🔊 Audio normalization[/] → {target_lufs} LUFS")
 
     # Pass 1: measure
