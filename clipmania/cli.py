@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import click
@@ -15,6 +16,20 @@ from .processing.layouts import Layout
 from .utils import detect_platform, extract_channel
 
 console = Console()
+
+
+def _ensure_utf8_stdio() -> None:
+    """Switch stdout/stderr to UTF-8 so Rich symbols (✓, 📡, …) can't crash
+    the CLI on legacy Windows consoles that default to cp1252."""
+    for name in ("stdout", "stderr"):
+        stream = getattr(sys, name, None)
+        encoding = (getattr(stream, "encoding", None) or "").lower().replace("-", "")
+        if encoding == "utf8" or not hasattr(stream, "reconfigure"):
+            continue
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (ValueError, OSError):
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -39,6 +54,7 @@ console = Console()
 @click.pass_context
 def main(ctx: click.Context, config_path: Path | None, output_dir: Path | None, verbose: bool) -> None:
     """ClipMania — capture, clip, transform, and export video from any platform."""
+    _ensure_utf8_stdio()
     ctx.ensure_object(dict)
 
     overrides = {}
@@ -824,8 +840,17 @@ def watch(
     from .ingestion.live_watcher import LiveWatcher
     from .processing.live_cutter import LiveCutterConfig
 
+    from .ingestion.streamlink_live import get_default_buffer_dir
+    from .utils import extract_channel
+
     cfg: ClipManiaConfig = ctx.obj["config"]
     out_dir = Path(cfg.output_dir)
+
+    # Each watch gets its own buffer root so several channels can be watched
+    # at once without sharing one buffer state file / lock. The root dir stays
+    # reserved for the manual live-start / clip-now / live-stop commands.
+    buffer_root = Path(cfg.buffer_dir) if cfg.buffer_dir else get_default_buffer_dir()
+    watch_buffer_dir = buffer_root / "watch" / extract_channel(url)
 
     cutter_cfg = LiveCutterConfig(
         clip_window_seconds=window,
@@ -840,7 +865,7 @@ def watch(
     watcher = LiveWatcher(
         url=url,
         check_interval=check_interval,
-        buffer_dir=cfg.buffer_dir,
+        buffer_dir=watch_buffer_dir,
         output_dir=out_dir,
         cutter_config=cutter_cfg,
         segment_duration=cfg.segment_duration,

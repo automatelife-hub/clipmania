@@ -229,6 +229,24 @@ class TestCliValidation:
         assert result.exit_code == 0
         mock_run.assert_called_once()
 
+    def test_watch_uses_isolated_buffer_dir_per_channel(self, runner):
+        """Two concurrent watches must not share one buffer state/lock."""
+        seen: list[Path] = []
+
+        def fake_init(self, url, **kwargs):
+            seen.append(Path(kwargs["buffer_dir"]))
+
+        with patch("clipmania.ingestion.live_watcher.LiveWatcher.__init__", fake_init), \
+             patch("clipmania.ingestion.live_watcher.LiveWatcher.run"):
+            for url in ("https://twitch.tv/alpha", "https://kick.com/beta"):
+                result = runner.invoke(main, ["watch", url])
+                assert result.exit_code == 0, result.output
+
+        assert len(seen) == 2
+        assert seen[0] != seen[1]
+        assert seen[0].parts[-2:] == ("watch", "alpha")
+        assert seen[1].parts[-2:] == ("watch", "beta")
+
     def test_watch_cli_invalid_intervals_rejected(self, runner):
         res1 = runner.invoke(main, ["watch", "https://twitch.tv/user", "--check-interval", "0"])
         assert res1.exit_code != 0
@@ -242,3 +260,34 @@ class TestCliValidation:
         assert res3.exit_code != 0
         assert "must be positive" in res3.output
 
+
+
+class TestConsoleEncoding:
+    """Rich output (✓, 📡, …) must not crash on legacy Windows consoles (cp1252)."""
+
+    def test_ensure_utf8_stdio_reconfigures_legacy_streams(self, monkeypatch):
+        import io
+        import sys
+
+        from clipmania.cli import _ensure_utf8_stdio
+
+        out = io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
+        err = io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
+        monkeypatch.setattr(sys, "stdout", out)
+        monkeypatch.setattr(sys, "stderr", err)
+
+        _ensure_utf8_stdio()
+
+        assert sys.stdout.encoding.lower().replace("-", "") == "utf8"
+        assert sys.stderr.encoding.lower().replace("-", "") == "utf8"
+        sys.stdout.write("✓ Found \U0001F4E1\n")  # must not raise
+        sys.stdout.flush()
+
+    def test_ensure_utf8_stdio_tolerates_streams_without_reconfigure(self, monkeypatch):
+        import io
+        import sys
+
+        from clipmania.cli import _ensure_utf8_stdio
+
+        monkeypatch.setattr(sys, "stdout", io.StringIO())
+        _ensure_utf8_stdio()  # must not raise

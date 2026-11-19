@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -330,8 +332,11 @@ def clip_from_buffer(
 ) -> Path:
     """Extract the last *seconds* from the active live buffer.
 
-    Reads the local HLS playlist to calculate total buffered duration,
-    then uses ``-ss`` with an absolute offset for reliable seeking.
+    The buffer playlist is live (no ``#EXT-X-ENDLIST``), so FFmpeg must not
+    read it as an input: its HLS demuxer would treat it as a live stream and
+    block waiting for new segments. Instead, snapshot the most recent
+    finished segments (copying them so the rolling buffer can't delete them
+    mid-read) and join them with the concat demuxer.
     """
     if seconds <= 0:
         raise ValueError("--seconds must be a positive integer.")
@@ -357,36 +362,82 @@ def clip_from_buffer(
 
     console.print(f"[bold blue]✂  Clipping[/] last {seconds}s from live buffer…")
 
-    # M5: Calculate total buffer duration from playlist segments instead of -sseof
-    total_duration = _get_playlist_duration(playlist)
-    if total_duration is not None and total_duration > 0:
-        start_offset = max(0, total_duration - seconds)
-        cmd = [
-            "ffmpeg", "-y",
-            "-ss", str(start_offset),
-            "-i", str(playlist),
-            "-t", str(seconds),
-            "-c", "copy",
-            "-movflags", "+faststart",
-            str(output_path),
-        ]
-    else:
-        # Fallback to -sseof if we can't parse the playlist
-        cmd = [
-            "ffmpeg", "-y",
-            "-sseof", f"-{seconds}",
-            "-i", str(playlist),
-            "-c", "copy",
-            "-movflags", "+faststart",
-            str(output_path),
-        ]
+    segments = _select_recent_segments(playlist, seconds)
+    if not segments:
+        raise RuntimeError(f"Live buffer has no segments yet: {playlist}")
 
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)  # H-5: 5 min timeout
-    if result.returncode != 0:
-        raise RuntimeError(f"FFmpeg clip extraction failed:\n{result.stderr[-500:]}")
+    with tempfile.TemporaryDirectory(prefix="clipmania_snap_") as snap_name:
+        snap_dir = Path(snap_name)
+        copied: list[Path] = []
+        for seg in segments:
+            dest = snap_dir / seg.name
+            try:
+                shutil.copy2(seg, dest)
+            except FileNotFoundError:
+                # Rotated out by the rolling buffer between read and copy
+                continue
+            copied.append(dest)
+        if not copied:
+            raise RuntimeError(f"Live buffer segments disappeared before they could be read: {playlist}")
+
+        list_file = snap_dir / "concat.txt"
+        list_file.write_text(
+            "".join(f"file '{p.as_posix()}'\n" for p in copied), encoding="utf-8"
+        )
+        cmd = [
+            "ffmpeg", "-y",
+            "-f", "concat", "-safe", "0",
+            "-i", str(list_file),
+            "-c", "copy",
+            "-bsf:a", "aac_adtstoasc",
+            "-movflags", "+faststart",
+            str(output_path),
+        ]
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        except subprocess.TimeoutExpired:
+            output_path.unlink(missing_ok=True)
+            raise RuntimeError("FFmpeg clip extraction timed out.") from None
+        if result.returncode != 0:
+            output_path.unlink(missing_ok=True)
+            raise RuntimeError(f"FFmpeg clip extraction failed:\n{result.stderr[-500:]}")
 
     console.print(f"[green]✓[/] Live clip saved: {output_path}")
     return output_path
+
+
+def _select_recent_segments(playlist_path: Path, seconds: float) -> list[Path]:
+    """Return the newest playlist segments covering at least *seconds*, oldest first."""
+    try:
+        lines = playlist_path.read_text().splitlines()
+    except OSError:
+        return []
+
+    entries: list[tuple[float, Path]] = []
+    pending: float | None = None
+    for raw in lines:
+        line = raw.strip()
+        if line.startswith("#EXTINF:"):
+            try:
+                pending = float(line[len("#EXTINF:"):].split(",")[0])
+            except ValueError:
+                pending = None
+        elif line and not line.startswith("#") and pending is not None:
+            seg = Path(line)
+            if not seg.is_absolute():
+                seg = playlist_path.parent / seg
+            entries.append((pending, seg))
+            pending = None
+
+    picked: list[Path] = []
+    total = 0.0
+    for dur, seg in reversed(entries):
+        picked.append(seg)
+        total += dur
+        if total >= seconds:
+            break
+    picked.reverse()
+    return picked
 
 
 def _get_playlist_duration(playlist_path: Path) -> float | None:

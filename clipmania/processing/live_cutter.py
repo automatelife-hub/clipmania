@@ -14,6 +14,7 @@ import time
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
+from uuid import uuid4
 
 from rich.console import Console
 
@@ -108,12 +109,18 @@ class LiveCutter:
         now = time.time() if current_time is None else current_time
         console.print(f"[bold cyan]✂ Triggering live clip ({reason})[/] [dim]window={self.config.clip_window_seconds}s[/]")
 
+        # Raw extraction is a temporary file inside output_dir (never CWD),
+        # removed once the processed clip exists or processing fails.
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        temp_raw = self.output_dir / f"_raw_{self.config.channel}_{uuid4().hex[:6]}.mp4"
         try:
             raw_clip = clip_from_buffer(
                 seconds=self.config.clip_window_seconds,
+                output_path=temp_raw,
                 buffer_dir=self.buffer_dir,
             )
         except Exception as exc:
+            temp_raw.unlink(missing_ok=True)
             console.print(f"[yellow]⚠ Failed to extract live clip from buffer:[/] {exc}")
             return None
 
@@ -142,6 +149,8 @@ class LiveCutter:
         except Exception as exc:
             console.print(f"[red]✗ Failed to process live clip:[/] {exc}")
             return None
+        finally:
+            Path(raw_clip).unlink(missing_ok=True)
 
     def check_interval_timer(self, current_time: float | None = None) -> Path | None:
         """Check if the periodic interval timer has expired and trigger a clip if ready."""

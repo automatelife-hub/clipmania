@@ -28,6 +28,49 @@ def test_interval_timer_triggers_clip(mock_process, mock_clip, tmp_path):
     assert cutter.last_clip_time == 15.0
 
 
+@patch("clipmania.processing.live_cutter.clip_from_buffer")
+@patch("clipmania.processing.live_cutter.process_clip")
+def test_trigger_clip_writes_raw_into_output_dir_and_cleans_it_up(mock_process, mock_clip, tmp_path):
+    out_dir = tmp_path / "out"
+    captured: dict[str, Path] = {}
+
+    def fake_clip(seconds, output_path=None, buffer_dir=None):
+        assert output_path is not None, "raw clip path must be explicit, not CWD"
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(b"raw")
+        captured["raw"] = output_path
+        return output_path
+
+    mock_clip.side_effect = fake_clip
+    mock_process.return_value = out_dir / "final.mp4"
+
+    cutter = LiveCutter(buffer_dir=tmp_path / "buffer", output_dir=out_dir, config=LiveCutterConfig())
+    cutter.trigger_clip(reason="manual", current_time=1.0)
+
+    assert captured["raw"].parent == out_dir
+    assert not captured["raw"].exists(), "temporary raw clip should be deleted after processing"
+
+
+@patch("clipmania.processing.live_cutter.clip_from_buffer")
+@patch("clipmania.processing.live_cutter.process_clip")
+def test_trigger_clip_cleans_up_raw_when_processing_fails(mock_process, mock_clip, tmp_path):
+    out_dir = tmp_path / "out"
+    captured: dict[str, Path] = {}
+
+    def fake_clip(seconds, output_path=None, buffer_dir=None):
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(b"raw")
+        captured["raw"] = output_path
+        return output_path
+
+    mock_clip.side_effect = fake_clip
+    mock_process.side_effect = RuntimeError("boom")
+
+    cutter = LiveCutter(buffer_dir=tmp_path / "buffer", output_dir=out_dir, config=LiveCutterConfig())
+    assert cutter.trigger_clip(reason="manual", current_time=1.0) is None
+    assert not captured["raw"].exists()
+
+
 def test_cooldown_prevents_duplicate_clipping(tmp_path):
     cfg = LiveCutterConfig(cooldown_seconds=60)
     cutter = LiveCutter(buffer_dir=tmp_path / "buffer", output_dir=tmp_path / "out", config=cfg)
