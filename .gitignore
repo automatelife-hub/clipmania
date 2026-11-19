@@ -32,3 +32,4 @@ buffer/
 .idea/
 .DS_Store
 Thumbs.db
+logs/

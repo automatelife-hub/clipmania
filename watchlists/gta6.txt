@@ -1,0 +1,36 @@
+# GTA 6 creator watchlist — compiled 2026-11-18 (launch night)
+# One channel URL per line. Lines starting with # are ignored.
+# Use with:  .venv\Scripts\python.exe scripts\watch_list.py watchlists\gta6.txt [watch options]
+#
+# Sources: Streams Charts launch records (personal peak viewers), launch-schedule
+# coverage (Kai Cenat 8PM ET, IShowSpeed 9PM ET), YouTube's 24h GTAVI lineup.
+# "live" = confirmed live in Grand Theft Auto VI by streamlink probe at compile time.
+# Twitch/Kick handles that were offline could not be verified to exist (streamlink
+# reports offline and nonexistent channels the same way).
+
+# --- Tier 1: biggest audiences ---
+https://www.twitch.tv/kaicenat               # live; full playthrough from 8PM ET
+https://www.youtube.com/@IShowSpeed/live     # live; 10-12h/day, no marathon
+https://www.twitch.tv/xqc                    # live; also multistreams to kick.com/xqc
+https://www.youtube.com/@WindahBasudara/live # 392.5K personal peak record (YouTube, ID)
+https://www.twitch.tv/alanzoka               # 361.8K personal peak record (Twitch, BR)
+https://www.twitch.tv/honeymad               # reported 642K+ peak, top Twitch streamer at launch
+https://www.twitch.tv/rubius                 # reported 311K within first hour
+
+# --- Tier 2: record-setting / large GTA audiences ---
+https://kick.com/rraenee                     # 273.9K personal peak record (Kick)
+https://www.youtube.com/@TGG_/live           # 225.1K personal peak record (YouTube, AU)
+https://www.youtube.com/@Gameplayrj/live     # 221.6K personal peak record (YouTube, BR)
+https://www.twitch.tv/djmariio               # 140.1K personal peak record (Twitch, ES)
+https://www.twitch.tv/mythpat                # 125.4K personal peak record (Twitch, IN)
+https://kick.com/3mr                         # live; #1 Kick GTA V creator H1 2026
+https://www.twitch.tv/jltomy                 # live (subathon); #1 Twitch GTA V creator H1 2026
+https://kick.com/gabepeixe                   # 74.2K personal peak record (Kick, BR)
+https://kick.com/bistecone                   # 72.2K personal peak record (Kick)
+https://www.youtube.com/@ludwig/live         # announced no-sleep launch marathon
+
+# --- Tier 3: YouTube 24h GTAVI launch lineup (handle exists, offline at check) ---
+https://www.youtube.com/@TotalGaming093/live
+https://www.youtube.com/@JuanSGuarnizo/live
+https://www.youtube.com/@Rivers_gg/live
+https://www.youtube.com/@Jelly/live
